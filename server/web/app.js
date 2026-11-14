@@ -53,8 +53,11 @@
         jobAssistError: '',
         conversationCache: {},
         streams: {},
+        applyingSettings: false,
+        settingsSaveTimer: null,
         openMenu: '',
         sidebarOpen: false,
+        sidebarCollapsed: false,
         providerModal: false,
         providerRecords: [],
         providerDraft: null,
@@ -64,9 +67,20 @@
     },
     watch: {
       providerId: function () {
+        if (this.applyingSettings) return;
         const p = this.providers.find(function (item) { return item.id === this.providerId; }.bind(this));
         const options = p ? (p.model || '').split(',').map(function (m) { return m.trim(); }).filter(Boolean) : [];
         if (options.indexOf(this.model) < 0) this.model = options[0] || '';
+        this.scheduleSettingsSave();
+      },
+      model: function () {
+        if (!this.applyingSettings) this.scheduleSettingsSave();
+      },
+      reasoningEffort: function () {
+        if (!this.applyingSettings) this.scheduleSettingsSave();
+      },
+      search: function () {
+        if (!this.applyingSettings) this.scheduleSettingsSave();
       },
     },
     computed: {
@@ -277,6 +291,57 @@
         this.reasoningEffort = value;
         this.openMenu = '';
       },
+      toggleSearch: function () {
+        this.search = !this.search;
+      },
+      currentSettings: function () {
+        return {
+          providerId: this.providerId,
+          model: this.model,
+          reasoningEffort: this.reasoningEffort || 'high',
+          search: !!this.search,
+        };
+      },
+      applyConversationSettings: function (conversation) {
+        const settings = conversation && conversation.settings;
+        if (!settings) return;
+        this.applyingSettings = true;
+        if (settings.providerId &&
+            this.providers.some(function (p) { return p.id === settings.providerId; })) {
+          this.providerId = settings.providerId;
+        }
+        const provider = this.providers.find(function (p) { return p.id === this.providerId; }.bind(this));
+        const options = provider
+          ? (provider.model || '').split(',').map(function (m) { return m.trim(); }).filter(Boolean)
+          : [];
+        if (settings.model) {
+          this.model = settings.model;
+        } else if (options.length && options.indexOf(this.model) < 0) {
+          this.model = options[0];
+        }
+        this.reasoningEffort = settings.reasoningEffort || 'high';
+        this.search = settings.search !== false;
+        this.$nextTick(function () {
+          this.applyingSettings = false;
+        }.bind(this));
+      },
+      scheduleSettingsSave: function () {
+        if (!this.active || this.sending) return;
+        this.active.settings = this.currentSettings();
+        if (!this.active.version) return;
+        if (this.settingsSaveTimer) clearTimeout(this.settingsSaveTimer);
+        this.settingsSaveTimer = setTimeout(function () {
+          this.settingsSaveTimer = null;
+          if (!this.sending && this.active) {
+            this.persistConversation(this.active.id).catch(function () { /* message error covers it */ });
+          }
+        }.bind(this), 350);
+      },
+      messageModel: function (message) {
+        if (message && message.model) return message.model;
+        if (this.active && this.active.settings && this.active.settings.model) return this.active.settings.model;
+        return this.model || 'AI';
+      },
       newConversation: function () {
         const now = Date.now();
         this.active = {
@@ -286,9 +351,11 @@
           updatedAt: now,
           version: 0,
           messages: [],
+          settings: this.currentSettings(),
         };
         this.activeId = this.active.id;
         this.conversationCache[this.active.id] = this.active;
+        this.applyingSettings = false;
         this.draft = '';
         this.editingId = '';
         this.follow = true;
@@ -388,6 +455,7 @@
           this.activeId = this.active.id;
         }
         const conversation = this.active;
+        conversation.settings = this.currentSettings();
         this.conversationCache[conversation.id] = conversation;
         if (this.editingId) {
           const editIndex = this.active.messages.findIndex(function (m) { return m.id === this.editingId; }.bind(this));
@@ -400,8 +468,8 @@
           createdAt: now, status: 'COMPLETE', error: null,
         };
         const assistant = {
-          id: this.uuid(), role: 'assistant', content: '', reasoning: '', images: [],
-          createdAt: now + 1, status: 'COMPLETE', error: null, streaming: true,
+          id: this.uuid(), role: 'assistant', content: '', reasoning: '', model: this.model,
+          images: [], createdAt: now + 1, status: 'COMPLETE', error: null, streaming: true,
         };
         conversation.messages.push(userMessage, assistant);
         if (!conversation.title || conversation.title === '新会话') {
@@ -460,6 +528,7 @@
       retryMessage: async function (index) {
         if (this.sending || !this.active) return;
         const conversation = this.active;
+        conversation.settings = this.currentSettings();
         const target = conversation.messages[index];
         if (!target || target.role !== 'assistant') return;
         let userIndex = -1;
@@ -469,8 +538,8 @@
         if (userIndex < 0) return;
         conversation.messages = conversation.messages.slice(0, userIndex + 1);
         const assistant = {
-          id: this.uuid(), role: 'assistant', content: '', reasoning: '', images: [],
-          createdAt: Date.now(), status: 'COMPLETE', error: null, streaming: true,
+          id: this.uuid(), role: 'assistant', content: '', reasoning: '', model: this.model,
+          images: [], createdAt: Date.now(), status: 'COMPLETE', error: null, streaming: true,
         };
         conversation.messages.push(assistant);
         this.conversationCache[conversation.id] = conversation;
@@ -593,9 +662,11 @@
           messages: conversation.messages.map(function (m) {
             return {
               id: m.id, role: m.role, content: m.content || '', reasoning: m.reasoning || '',
-              images: m.images || [], createdAt: m.createdAt, status: m.status || 'COMPLETE', error: m.error || null,
+              model: m.model || '', images: m.images || [], createdAt: m.createdAt,
+              status: m.status || 'COMPLETE', error: m.error || null,
             };
           }),
+          settings: conversation.settings || this.currentSettings(),
         };
         let saved;
         if (!conversation.version) {
@@ -609,11 +680,13 @@
               createdAt: convo.createdAt,
               updatedAt: convo.updatedAt,
               messages: convo.messages,
+              settings: convo.settings,
             },
           });
         }
         const merged = Object.assign({}, saved, {
           messages: saved.messages || conversation.messages,
+          settings: saved.settings || conversation.settings,
         });
         this.$set(this.conversationCache, merged.id, merged);
         if (this.activeId === merged.id) this.active = merged;
@@ -623,6 +696,7 @@
         if (!silent) this.activeId = id;
         if (this.conversationCache[id] && this.streams[id]) {
           this.active = this.conversationCache[id];
+          this.applyConversationSettings(this.active);
           this.$nextTick(this.scrollToBottom);
           return;
         }
@@ -631,6 +705,7 @@
           this.$set(this.conversationCache, id, data);
           if (this.activeId === id) {
             this.active = data;
+            this.applyConversationSettings(data);
             this.$nextTick(this.scrollToBottom);
           }
         } catch (e) {

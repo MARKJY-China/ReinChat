@@ -39,27 +39,37 @@ type MessageDTO struct {
 	Role      string     `json:"role"`
 	Content   string     `json:"content"`
 	Reasoning string     `json:"reasoning,omitempty"`
+	Model     string     `json:"model,omitempty"`
 	Images    []ImageDTO `json:"images"`
 	CreatedAt int64      `json:"createdAt"`
 	Status    string     `json:"status"`
 	Error     *string    `json:"error"`
 }
 
+type ConversationSettings struct {
+	ProviderID      string `json:"providerId"`
+	Model           string `json:"model"`
+	ReasoningEffort string `json:"reasoningEffort"`
+	Search          bool   `json:"search"`
+}
+
 type ConversationDTO struct {
-	ID        string       `json:"id"`
-	Title     string       `json:"title"`
-	CreatedAt int64        `json:"createdAt"`
-	UpdatedAt int64        `json:"updatedAt"`
-	Version   int64        `json:"version"`
-	Messages  []MessageDTO `json:"messages"`
+	ID        string                `json:"id"`
+	Title     string                `json:"title"`
+	CreatedAt int64                 `json:"createdAt"`
+	UpdatedAt int64                 `json:"updatedAt"`
+	Version   int64                 `json:"version"`
+	Messages  []MessageDTO          `json:"messages"`
+	Settings  *ConversationSettings `json:"settings,omitempty"`
 }
 
 type UpdateConversationRequest struct {
-	BaseVersion int64        `json:"baseVersion"`
-	Title       string       `json:"title"`
-	CreatedAt   int64        `json:"createdAt"`
-	UpdatedAt   int64        `json:"updatedAt"`
-	Messages    []MessageDTO `json:"messages"`
+	BaseVersion int64                 `json:"baseVersion"`
+	Title       string                `json:"title"`
+	CreatedAt   int64                 `json:"createdAt"`
+	UpdatedAt   int64                 `json:"updatedAt"`
+	Messages    []MessageDTO          `json:"messages"`
+	Settings    *ConversationSettings `json:"settings,omitempty"`
 }
 
 type SummaryDTO struct {

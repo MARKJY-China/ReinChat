@@ -91,8 +91,12 @@ func (s *Server) runRelaySearchAgent(ctx context.Context, jobID string, p *relay
 		if text == "" {
 			return false
 		}
-		_ = s.updateRelayJob(jobID, "completed", &text, nil, "")
+		reasoning := cleanDSMLText(choice.Reasoning)
+		_ = s.updateRelayJob(jobID, "completed", &text, &reasoning, "")
 		s.relay.publish(jobID, relayEvent{Type: "delta", Text: text})
+		if reasoning != "" {
+			s.relay.publish(jobID, relayEvent{Type: "reasoning", Text: reasoning})
+		}
 		s.relay.publish(jobID, relayEvent{Type: "status", Status: "completed"})
 		return true
 	}

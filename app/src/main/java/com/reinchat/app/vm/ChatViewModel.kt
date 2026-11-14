@@ -254,6 +254,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         val assistantMessage = ChatMessage(
             role = MessageRole.ASSISTANT,
             content = "",
+            model = provider.activeModel,
             createdAt = now + 1,
             status = MessageStatus.STREAMING,
         )
@@ -366,6 +367,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         val assistantMessage = ChatMessage(
             role = MessageRole.ASSISTANT,
             content = "",
+            model = provider.activeModel,
             createdAt = now + 1,
             status = MessageStatus.STREAMING,
         )
@@ -1477,6 +1479,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 role = message.roleEnum(),
                 content = message.content,
                 reasoning = message.reasoning,
+                model = message.model,
                 images = images,
                 createdAt = message.createdAt.takeIf { it > 0 } ?: System.currentTimeMillis(),
                 status = message.statusEnum(),

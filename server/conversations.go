@@ -36,6 +36,11 @@ func (s *Server) handleCreateConversation(w http.ResponseWriter, r *http.Request
 	if conversation.Messages == nil {
 		conversation.Messages = []MessageDTO{}
 	}
+	conversation.Settings = normalizeConversationSettings(conversation.Settings)
+	if e := validateConversationSettings(conversation.Settings); e != nil {
+		writeRequestError(w, e)
+		return
+	}
 	if !isUUID(conversation.ID) {
 		writeAPIError(w, http.StatusBadRequest, "validation_error", "conversation id must be a UUID")
 		return
@@ -54,14 +59,19 @@ func (s *Server) handleCreateConversation(w http.ResponseWriter, r *http.Request
 		s.internalError(w, r, err)
 		return
 	}
+	settingsJSON, err := json.Marshal(conversation.Settings)
+	if err != nil {
+		s.internalError(w, r, err)
+		return
+	}
 
 	res, err := s.db.ExecContext(r.Context(),
 		`INSERT INTO conversations
-		 (user_id, id, title, created_at, updated_at, version, messages_json, message_count, preview)
-		 VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?)
+		 (user_id, id, title, created_at, updated_at, version, messages_json, message_count, preview, settings_json)
+		 VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?)
 		 ON CONFLICT(user_id, id) DO NOTHING`,
 		user.ID, conversation.ID, conversation.Title, conversation.CreatedAt, conversation.UpdatedAt,
-		stored, len(messages), preview)
+		stored, len(messages), preview, settingsJSON)
 	if err != nil {
 		s.internalError(w, r, err)
 		return
@@ -171,6 +181,20 @@ func (s *Server) updateConversationHandler(w http.ResponseWriter, r *http.Reques
 	if req.Messages == nil {
 		req.Messages = []MessageDTO{}
 	}
+	var settingsJSON []byte
+	if req.Settings != nil {
+		req.Settings = normalizeConversationSettings(req.Settings)
+		if e := validateConversationSettings(req.Settings); e != nil {
+			writeRequestError(w, e)
+			return
+		}
+		var marshalErr error
+		settingsJSON, marshalErr = json.Marshal(req.Settings)
+		if marshalErr != nil {
+			s.internalError(w, r, marshalErr)
+			return
+		}
+	}
 	if req.BaseVersion < 1 {
 		writeAPIError(w, http.StatusBadRequest, "validation_error", "baseVersion must be at least 1")
 		return
@@ -192,10 +216,11 @@ func (s *Server) updateConversationHandler(w http.ResponseWriter, r *http.Reques
 	updatedAt := s.now().UnixMilli()
 	res, err := s.db.ExecContext(r.Context(),
 		`UPDATE conversations SET title = ?, created_at = ?, updated_at = ?, version = version + 1,
-		 messages_json = ?, message_count = ?, preview = ?
+		 messages_json = ?, message_count = ?, preview = ?,
+		 settings_json = COALESCE(?, settings_json)
 		 WHERE user_id = ? AND id = ? AND version = ?`,
 		req.Title, req.CreatedAt, updatedAt, stored, len(messages), preview,
-		user.ID, conversationID, req.BaseVersion)
+		settingsJSON, user.ID, conversationID, req.BaseVersion)
 	if err != nil {
 		s.internalError(w, r, err)
 		return
@@ -222,6 +247,12 @@ func (s *Server) updateConversationHandler(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	var responseSettings *ConversationSettings
+	if req.Settings != nil {
+		responseSettings = req.Settings
+	} else if current, loadErr := s.loadConversation(r.Context(), user.ID, conversationID); loadErr == nil {
+		responseSettings = current.Settings
+	}
 	writeJSON(w, http.StatusOK, ConversationDTO{
 		ID:        conversationID,
 		Title:     req.Title,
@@ -229,6 +260,7 @@ func (s *Server) updateConversationHandler(w http.ResponseWriter, r *http.Reques
 		UpdatedAt: updatedAt,
 		Version:   req.BaseVersion + 1,
 		Messages:  messages,
+		Settings:  responseSettings,
 	})
 	s.events.publish(user.ID, SyncEvent{
 		Type:           "conversation.updated",
@@ -254,17 +286,22 @@ func (s *Server) deleteConversationHandler(w http.ResponseWriter, r *http.Reques
 
 func (s *Server) loadConversation(ctx context.Context, userID int64, conversationID string) (*ConversationDTO, error) {
 	var conversation ConversationDTO
-	var stored []byte
+	var stored, settingsStored []byte
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, title, created_at, updated_at, version, messages_json
+		`SELECT id, title, created_at, updated_at, version, messages_json, settings_json
 		 FROM conversations WHERE user_id = ? AND id = ?`, userID, conversationID).
 		Scan(&conversation.ID, &conversation.Title, &conversation.CreatedAt,
-			&conversation.UpdatedAt, &conversation.Version, &stored)
+			&conversation.UpdatedAt, &conversation.Version, &stored, &settingsStored)
 	if err != nil {
 		return nil, err
 	}
 	if err := json.Unmarshal(stored, &conversation.Messages); err != nil {
 		return nil, fmt.Errorf("decode stored conversation: %w", err)
+	}
+	conversation.Settings = &ConversationSettings{ReasoningEffort: "high", Search: true}
+	if len(settingsStored) > 0 {
+		_ = json.Unmarshal(settingsStored, conversation.Settings)
+		conversation.Settings = normalizeConversationSettings(conversation.Settings)
 	}
 	for i := range conversation.Messages {
 		if conversation.Messages[i].Images == nil {
@@ -275,6 +312,35 @@ func (s *Server) loadConversation(ctx context.Context, userID int64, conversatio
 		conversation.Messages = []MessageDTO{}
 	}
 	return &conversation, nil
+}
+
+func normalizeConversationSettings(settings *ConversationSettings) *ConversationSettings {
+	if settings == nil {
+		return &ConversationSettings{ReasoningEffort: "high", Search: true}
+	}
+	copy := *settings
+	if copy.ReasoningEffort == "" {
+		copy.ReasoningEffort = "high"
+	}
+	return &copy
+}
+
+func validateConversationSettings(settings *ConversationSettings) *apiError {
+	if settings == nil {
+		return nil
+	}
+	if utf8.RuneCountInString(settings.ProviderID) > maxMessageIDRunes {
+		return invalidField("settings", "providerId is too long")
+	}
+	if utf8.RuneCountInString(settings.Model) > 500 {
+		return invalidField("settings", "model is too long")
+	}
+	switch settings.ReasoningEffort {
+	case "", "low", "medium", "high", "max":
+	default:
+		return invalidField("settings", "unsupported reasoningEffort")
+	}
+	return nil
 }
 
 func validateConversationFields(title string, createdAt, updatedAt int64, messages []MessageDTO) *apiError {

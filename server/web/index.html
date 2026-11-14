@@ -34,15 +34,16 @@
     </div>
   </div>
 
-  <div v-else class="app-shell">
+  <div v-else class="app-shell" :class="{collapsed: sidebarCollapsed}">
     <div class="mobile-scrim" :class="{show: sidebarOpen}" @click.stop="sidebarOpen = false"></div>
-    <aside class="sidebar" :class="{open: sidebarOpen}">
+    <aside class="sidebar" :class="{open: sidebarOpen, collapsed: sidebarCollapsed}">
       <div class="sidebar-head">
         <div class="brand small">
           <img class="brand-icon" src="/icon-192.png" alt="">
           <span>ReinChat <small>WEB</small></span>
         </div>
-        <button class="icon-btn" title="新建会话" @click.stop="newConversation">＋</button>
+        <button class="icon-btn sidebar-add" title="新建会话" @click.stop="newConversation">＋</button>
+        <button class="icon-btn collapse-btn" :title="sidebarCollapsed ? '展开侧栏' : '收起侧栏'" @click.stop="sidebarCollapsed = !sidebarCollapsed">{{ sidebarCollapsed ? '›' : '‹' }}</button>
       </div>
       <button class="new-chat" @click.stop="newConversation">
         <span class="new-chat-icon">＋</span><span>新建会话</span><span class="kbd">N</span>
@@ -101,7 +102,7 @@
             <article v-for="(m, mi) in active.messages" :key="m.id" class="msg" :class="m.role">
               <div class="msg-avatar" v-if="m.role === 'assistant'"><img src="/icon-192.png" alt=""></div>
               <div class="msg-content">
-                <div class="msg-role">{{ m.role === 'user' ? '你' : 'ReinChat' }}<span>{{ formatTime(m.createdAt) }}</span></div>
+                <div class="msg-role">{{ m.role === 'user' ? '你' : messageModel(m) }}<span>{{ formatTime(m.createdAt) }}</span></div>
                 <details class="reasoning" v-if="m.reasoning">
                   <summary>思考过程</summary>
                   <pre>{{ cleanText(m.reasoning) }}</pre>
@@ -169,7 +170,7 @@
                 </div>
               </transition>
             </div>
-            <button class="search-toggle" :class="{on: search}" :disabled="sending || level < 2" @click.stop="search = !search" title="让服务端检索网页">
+            <button class="search-toggle" :class="{on: search}" :disabled="sending || level < 2" @click.stop="toggleSearch" title="让服务端检索网页">
               <span class="search-dot"></span>联网
             </button>
           </div>

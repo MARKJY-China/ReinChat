@@ -52,6 +52,7 @@ CREATE TABLE IF NOT EXISTS conversations (
     messages_json  TEXT    NOT NULL,
     message_count  INTEGER NOT NULL,
     preview        TEXT    NOT NULL,
+    settings_json  TEXT    NOT NULL DEFAULT '{"reasoningEffort":"high","search":true}',
     PRIMARY KEY (user_id, id)
 );
 CREATE INDEX IF NOT EXISTS idx_conversations_user_updated

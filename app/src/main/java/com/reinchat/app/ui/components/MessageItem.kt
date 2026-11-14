@@ -392,7 +392,7 @@ private fun AssistantMessage(
                 LiquidOrb(size = 22.dp, letter = false)
                 Spacer(Modifier.width(8.dp))
                 Text(
-                    text = "ReinChat",
+                    text = message.model.ifBlank { "ReinChat" },
                     style = MaterialTheme.typography.labelLarge,
                     fontWeight = FontWeight.SemiBold,
                     color = ReinColors.TextPrimary.copy(alpha = 0.92f),

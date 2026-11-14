@@ -63,6 +63,12 @@ func openStore(dataDir string) (*sql.DB, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("ensure users.level: %w", err)
 	}
+	if _, err := db.ExecContext(ctx,
+		`ALTER TABLE conversations ADD COLUMN settings_json TEXT NOT NULL DEFAULT '{"reasoningEffort":"high","search":true}'`); err != nil &&
+		!strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
+		_ = db.Close()
+		return nil, fmt.Errorf("ensure conversations.settings_json: %w", err)
+	}
 	_ = os.Chmod(dbPath, 0o600)
 	return db, nil
 }

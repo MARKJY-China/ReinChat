@@ -45,6 +45,7 @@ data class ChatMessage(
     val content: String = "",
     /** Provider reasoning/thinking text, kept separate from the visible answer. */
     val reasoning: String = "",
+    val model: String = "",
     val images: List<ChatImage> = emptyList(),
     val createdAt: Long = System.currentTimeMillis(),
     val status: MessageStatus = MessageStatus.COMPLETE,
