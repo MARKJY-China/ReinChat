@@ -3,116 +3,237 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#050c09">
+  <meta name="description" content="ReinChat Web — 与企业级 AI 对话">
   <title>ReinChat · Web</title>
+  <link rel="icon" href="/favicon.ico" sizes="any">
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  <link rel="manifest" href="/site.webmanifest">
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
-<div id="app" v-cloak>
+<div id="app" v-cloak @click="closeMenus">
   <div v-if="!token" class="login-shell">
     <div class="login-card">
-      <div class="brand"><span class="orb">R</span><span>ReinChat <small>Web</small></span></div>
-      <p class="muted">与 App 使用同一个账号，实时同步云端会话。</p>
+      <img class="login-logo" src="/icon-192.png" alt="ReinChat">
+      <div class="login-brand">ReinChat <small>WEB</small></div>
+      <p class="login-tagline">一个安静、流畅的 AI 对话空间。与 App 实时同步。</p>
       <label>服务器</label>
       <input v-model.trim="server" placeholder="https://reinchat.markjy.com" autocomplete="url">
       <label>用户名</label>
-      <input v-model.trim="username" placeholder="用户名" autocomplete="username">
+      <input v-model.trim="username" placeholder="输入用户名" autocomplete="username">
       <label>密码</label>
-      <input v-model="password" type="password" placeholder="密码" autocomplete="current-password" @keyup.enter="submitAuth">
+      <input v-model="password" type="password" placeholder="输入密码" autocomplete="current-password" @keyup.enter="submitAuth">
       <p class="error" v-if="error">{{ error }}</p>
-      <div class="row">
-        <button class="primary" @click="submitAuth" :disabled="busy">{{ busy ? '连接中…' : (mode === 'login' ? '登录' : '注册') }}</button>
-        <button class="ghost" @click="mode = mode === 'login' ? 'register' : 'login'">{{ mode === 'login' ? '注册账号' : '已有账号' }}</button>
+      <div class="login-actions">
+        <button class="primary" @click="submitAuth" :disabled="busy">{{ busy ? '连接中…' : (mode === 'login' ? '登录' : '创建账号') }}</button>
+        <button class="text-btn" @click="mode = mode === 'login' ? 'register' : 'login'">{{ mode === 'login' ? '注册账号' : '已有账号' }}</button>
       </div>
+      <div class="login-foot">端到端加密传输 · 服务端中转</div>
     </div>
   </div>
 
   <div v-else class="app-shell">
-    <aside class="sidebar">
-      <div class="brand small"><span class="orb">R</span><span>ReinChat</span></div>
-      <div class="userline"><span>{{ user }} · LV{{ level }}</span><button class="link" @click="logout">退出</button></div>
-      <div class="account-card">
-        <div v-if="pendingRequest" class="muted">LV2 工单审核中</div>
-        <template v-else-if="level < 2">
-          <textarea v-model="upgradeReason" placeholder="申请 LV2 的理由（10 字以上）"></textarea>
-          <button class="ghost small" @click="submitUpgrade" :disabled="upgradeBusy">申请升级</button>
-        </template>
-        <div v-else class="muted">LV2 · 服务端中转可用</div>
-        <a class="link admin-link" href="/admin">管理控制台</a>
+    <div class="mobile-scrim" :class="{show: sidebarOpen}" @click.stop="sidebarOpen = false"></div>
+    <aside class="sidebar" :class="{open: sidebarOpen}">
+      <div class="sidebar-head">
+        <div class="brand small">
+          <img class="brand-icon" src="/icon-192.png" alt="">
+          <span>ReinChat <small>WEB</small></span>
+        </div>
+        <button class="icon-btn" title="新建会话" @click.stop="newConversation">＋</button>
       </div>
-      <p class="error" v-if="upgradeError">{{ upgradeError }}</p>
-      <button class="refresh" @click="refreshAll" :disabled="loading">刷新会话</button>
+      <button class="new-chat" @click.stop="newConversation">
+        <span class="new-chat-icon">＋</span><span>新建会话</span><span class="kbd">N</span>
+      </button>
+      <div class="section-label"><span>会话</span><span>{{ conversations.length }}</span></div>
       <div class="conv-list">
-        <button v-for="c in conversations" :key="c.id" class="conv" :class="{active: c.id === activeId}" @click="openConversation(c.id)">
-          <span class="conv-title">{{ c.title || '未命名会话' }}</span>
-          <span class="conv-preview">{{ cleanText(c.preview) }}</span>
-          <span class="conv-meta">{{ formatTime(c.updatedAt) }} · v{{ c.version }}</span>
+        <button v-for="c in conversations" :key="c.id" class="conv" :class="{active: c.id === activeId}" @click.stop="openConversation(c.id)">
+          <span class="conv-dot"></span>
+          <span class="conv-main">
+            <span class="conv-title">{{ c.title || '未命名会话' }}</span>
+            <span class="conv-preview">{{ cleanText(c.preview) }}</span>
+          </span>
+          <span class="conv-meta">{{ formatShort(c.updatedAt) }}</span>
         </button>
-        <p class="empty" v-if="!conversations.length">还没有云端会话</p>
+        <p class="empty-small" v-if="!conversations.length">还没有云端会话</p>
+      </div>
+      <div class="sidebar-foot">
+        <div class="account-card">
+          <div class="account-top">
+            <span class="avatar">{{ user.slice(0, 1).toUpperCase() }}</span>
+            <span class="account-name">{{ user }}<small>LV{{ level }}</small></span>
+            <button class="link" @click.stop="logout">退出</button>
+          </div>
+          <div class="upgrade-row" v-if="level < 2">
+            <div v-if="pendingRequest" class="tiny muted">LV2 工单审核中</div>
+            <template v-else>
+              <input v-model="upgradeReason" placeholder="申请 LV2 理由（10 字以上）">
+              <button class="ghost small" @click.stop="submitUpgrade" :disabled="upgradeBusy">申请</button>
+            </template>
+          </div>
+          <div class="account-links">
+            <button class="link small" @click.stop="openProviderManager">服务商管理</button>
+            <a class="link small" href="/admin">管理台</a>
+          </div>
+        </div>
+        <p class="error tiny" v-if="upgradeError">{{ upgradeError }}</p>
       </div>
     </aside>
 
     <main class="chat">
       <header class="chat-head">
-        <span class="sync" :class="syncState">{{ syncLabel }}</span>
-        <h1>{{ active ? (active.title || '未命名会话') : '选择会话' }}</h1>
-        <span class="muted" v-if="active">v{{ active.version }} · {{ active.messages.length }} 条消息</span>
+        <button class="icon-btn mobile-menu" title="会话列表" @click.stop="sidebarOpen = !sidebarOpen">☰</button>
+        <div class="head-title">
+          <div class="sync-line"><span class="sync" :class="syncState">{{ syncLabel }}</span><span class="head-sep">·</span><span class="muted">{{ active ? (active.messages.length + ' 条消息') : '准备就绪' }}</span></div>
+          <h1>{{ active ? (active.title || '未命名会话') : 'ReinChat' }}</h1>
+        </div>
+        <div class="head-actions">
+          <button class="ghost head-btn" @click.stop="openProviderManager">服务商</button>
+          <button class="primary head-btn new-mobile" @click.stop="newConversation">新对话</button>
+        </div>
       </header>
 
       <section class="messages" ref="messages" @scroll="onMessagesScroll">
-        <template v-if="active">
-          <article v-for="(m, mi) in active.messages" :key="m.id" class="msg" :class="m.role">
-            <div class="msg-role">{{ m.role === 'user' ? '你' : 'ReinChat' }}<span>{{ formatTime(m.createdAt) }}</span></div>
-            <details class="reasoning" v-if="m.reasoning">
-              <summary>思考过程</summary>
-              <pre>{{ cleanText(m.reasoning) }}</pre>
-            </details>
-            <div class="msg-body">{{ cleanText(m.content) }}</div>
-            <div class="msg-error" v-if="m.error">{{ m.error }}</div>
-            <div class="msg-tools" v-if="!sending">
-              <button v-if="m.role === 'user'" @click="beginEdit(m)">编辑</button>
-              <button v-if="m.role === 'assistant'" @click="retryMessage(mi)">重试</button>
-              <button v-if="mi < active.messages.length - 1" @click="rewindMessage(mi)">回退到此处</button>
+        <div class="messages-inner">
+          <template v-if="active">
+            <article v-for="(m, mi) in active.messages" :key="m.id" class="msg" :class="m.role">
+              <div class="msg-avatar" v-if="m.role === 'assistant'"><img src="/icon-192.png" alt=""></div>
+              <div class="msg-content">
+                <div class="msg-role">{{ m.role === 'user' ? '你' : 'ReinChat' }}<span>{{ formatTime(m.createdAt) }}</span></div>
+                <details class="reasoning" v-if="m.reasoning">
+                  <summary>思考过程</summary>
+                  <pre>{{ cleanText(m.reasoning) }}</pre>
+                </details>
+                <div class="msg-body markdown-body" v-html="renderMarkdown(m.content)"></div>
+                <div class="msg-error" v-if="m.error">{{ m.error }}</div>
+                <div class="msg-tools" v-if="!sending">
+                  <button v-if="m.role === 'user'" @click.stop="beginEdit(m)">编辑</button>
+                  <button v-if="m.role === 'assistant'" @click.stop="retryMessage(mi)">重试</button>
+                  <button v-if="mi < active.messages.length - 1" @click.stop="rewindMessage(mi)">回退到此处</button>
+                </div>
+              </div>
+            </article>
+            <div class="empty-chat" v-if="!active.messages.length">
+              <img src="/icon-192.png" alt=""><h2>开始新的对话</h2><p>在下方输入问题，ReinChat 会实时同步到你的所有设备。</p>
             </div>
-          </article>
-          <p class="empty" v-if="!active.messages.length">这个会话还没有消息</p>
-        </template>
-        <p class="empty" v-else>从左侧选择一个云端会话。App 里的新消息会实时出现在这里。</p>
+          </template>
+          <div class="empty-chat" v-else>
+            <img src="/icon-192.png" alt=""><h2>选择一个会话</h2><p>或者点击左侧「新建会话」开始。</p>
+          </div>
+        </div>
       </section>
 
-      <button v-show="!atBottom" class="scroll-bottom" @click="jumpToBottom" title="回到最新">↓</button>
-      <footer class="composer">
-        <div class="composer-row">
-          <select v-model="providerId" :disabled="sending || level < 2">
-            <option value="">选择服务商</option>
-            <option v-for="p in providers" :key="p.id" :value="p.id">{{ p.name }}</option>
-          </select>
-          <select v-model="model" :disabled="sending || level < 2 || !modelOptions.length">
-            <option v-for="m in modelOptions" :key="m" :value="m">{{ m }}</option>
-          </select>
-          <select v-model="reasoningEffort" :disabled="sending || level < 2">
-            <option value="">思考：自动</option>
-            <option value="low">思考：低</option>
-            <option value="high">思考：高</option>
-            <option value="max">思考：最高</option>
-          </select>
-          <label class="search-toggle" :class="{on: search}" title="让服务端检索网页">
-            <input type="checkbox" v-model="search" :disabled="sending || level < 2"> 联网
-          </label>
+      <button v-show="!atBottom" class="scroll-bottom" @click.stop="jumpToBottom" title="回到最新">↓</button>
+      <footer class="composer-shell">
+        <div class="composer">
+          <div class="composer-tools">
+            <div class="dd" :class="{open: openMenu === 'provider'}">
+              <button class="dd-trigger" type="button" :disabled="sending || level < 2" @click.stop="toggleMenu('provider')">
+                <span class="dd-label">{{ selectedProviderName }}</span><span class="dd-chevron">⌄</span>
+              </button>
+              <transition name="drop">
+                <div class="dd-menu" v-if="openMenu === 'provider'" @click.stop>
+                  <button v-for="p in providers" :key="p.id" class="dd-item" @click="chooseProvider(p)">
+                    <span class="dd-item-main">{{ p.name }}</span><span class="dd-item-sub">{{ p.model }}</span><span v-if="p.id === providerId" class="dd-check">✓</span>
+                  </button>
+                  <div class="dd-sep"></div>
+                  <button class="dd-item manage" @click="openProviderManager">＋ 管理服务商</button>
+                </div>
+              </transition>
+            </div>
+            <div class="dd" :class="{open: openMenu === 'model'}">
+              <button class="dd-trigger" type="button" :disabled="sending || level < 2 || !modelOptions.length" @click.stop="toggleMenu('model')">
+                <span class="dd-label">{{ model || '选择模型' }}</span><span class="dd-chevron">⌄</span>
+              </button>
+              <transition name="drop">
+                <div class="dd-menu" v-if="openMenu === 'model'" @click.stop>
+                  <button v-for="m in modelOptions" :key="m" class="dd-item" @click="chooseModel(m)">
+                    <span class="dd-item-main">{{ m }}</span><span v-if="m === model" class="dd-check">✓</span>
+                  </button>
+                  <p v-if="!modelOptions.length" class="empty-small">请先添加服务商模型</p>
+                </div>
+              </transition>
+            </div>
+            <div class="dd" :class="{open: openMenu === 'reasoning'}">
+              <button class="dd-trigger" type="button" :disabled="sending || level < 2" @click.stop="toggleMenu('reasoning')">
+                <span class="dd-label">{{ selectedReasoningLabel }}</span><span class="dd-chevron">⌄</span>
+              </button>
+              <transition name="drop">
+                <div class="dd-menu" v-if="openMenu === 'reasoning'" @click.stop>
+                  <button v-for="r in reasoningOptions" :key="r.value" class="dd-item" @click="chooseReasoning(r.value)">
+                    <span class="dd-item-main">{{ r.label }}</span><span v-if="r.value === reasoningEffort" class="dd-check">✓</span>
+                  </button>
+                </div>
+              </transition>
+            </div>
+            <button class="search-toggle" :class="{on: search}" :disabled="sending || level < 2" @click.stop="search = !search" title="让服务端检索网页">
+              <span class="search-dot"></span>联网
+            </button>
+          </div>
           <textarea ref="draft" v-model="draft" rows="2" placeholder="给 ReinChat 发送消息…" @keydown.enter.exact.prevent="sendMessage"></textarea>
-          <button v-if="editingId" class="ghost" @click="cancelEdit">取消</button>
-          <button class="primary send" @click="sendMessage" :disabled="sending || !draft.trim() || level < 2 || !providerId">
-            {{ sending ? '生成中…' : (editingId ? '重新发送' : '发送') }}
-          </button>
-        </div>
-        <div class="composer-hint">
-          <span v-if="level < 2">LV2 才能使用服务端 AI 中转，请先申请升级。</span>
-          <span v-else-if="!providers.length">先在 App 中同步一个非“仅本地”的服务商配置。</span>
-          <span v-else-if="jobAssistError" class="error">{{ jobAssistError }}</span>
-          <span v-else>通过 ReinChat 服务端中转 · {{ model || '未选择模型' }}</span>
+          <div class="composer-bottom">
+            <div class="composer-hint">
+              <span v-if="level < 2">LV2 才能使用服务端 AI 中转，请先申请升级。</span>
+              <span v-else-if="!providers.length">先添加一个服务商配置。</span>
+              <span v-else-if="jobAssistError" class="error">{{ jobAssistError }}</span>
+              <span v-else>{{ sending ? 'ReinChat 正在思考…' : '通过服务端中转 · ' + (model || '未选择模型') }}</span>
+            </div>
+            <div class="composer-buttons">
+              <button v-if="editingId" class="ghost small" @click.stop="cancelEdit">取消</button>
+              <button class="primary send" @click.stop="sendMessage" :disabled="sending || !draft.trim() || level < 2 || !providerId">
+                <span v-if="sending" class="spinner"></span>{{ sending ? '生成中' : (editingId ? '重新发送' : '发送') }}
+              </button>
+            </div>
+          </div>
         </div>
       </footer>
     </main>
   </div>
+
+  <transition name="modal">
+    <div v-if="providerModal" class="modal-mask" @click.self="providerModal = false">
+      <div class="modal-card">
+        <div class="modal-head">
+          <div><h2>服务商</h2><p class="muted">配置用于服务端中转的模型服务</p></div>
+          <button class="icon-btn" @click.stop="providerModal = false">×</button>
+        </div>
+        <template v-if="!providerDraft">
+          <div class="provider-list">
+            <div v-for="p in providerRecords" :key="p.id" class="provider-row">
+              <div class="provider-avatar">{{ p.name.slice(0,1).toUpperCase() }}</div>
+              <div class="provider-info"><strong>{{ p.name }}</strong><span>{{ p.baseUrl }}</span><small>{{ p.model }} · {{ p.protocol }}</small></div>
+              <button class="ghost small" @click.stop="editProvider(p)">编辑</button>
+              <button class="ghost small danger-text" @click.stop="deleteProviderRecord(p)">删除</button>
+            </div>
+            <p v-if="!providerRecords.length" class="empty-small">暂无服务商</p>
+          </div>
+          <div class="modal-actions"><button class="primary" @click.stop="newProvider">＋ 添加服务商</button></div>
+        </template>
+        <template v-else>
+          <div class="form-grid">
+            <label>名称<input v-model.trim="providerDraft.name" placeholder="DeepSeek"></label>
+            <label>协议
+              <div class="segmented">
+                <button :class="{active: providerDraft.protocol === 'CHAT_COMPLETIONS'}" @click.stop="providerDraft.protocol = 'CHAT_COMPLETIONS'">Chat Completions</button>
+                <button :class="{active: providerDraft.protocol === 'RESPONSES'}" @click.stop="providerDraft.protocol = 'RESPONSES'">Responses</button>
+              </div>
+            </label>
+            <label>Base URL<input v-model.trim="providerDraft.baseUrl" placeholder="https://api.deepseek.com"></label>
+            <label>API Key<input v-model.trim="providerDraft.apiKey" type="password" placeholder="sk-..."></label>
+            <label>模型（逗号分隔）<input v-model.trim="providerDraft.model" placeholder="deepseek-chat,deepseek-reasoner"></label>
+            <label class="wide">系统提示词<textarea v-model="providerDraft.systemPrompt" rows="3" placeholder="可选"></textarea></label>
+          </div>
+          <p class="error" v-if="providerError">{{ providerError }}</p>
+          <div class="modal-actions">
+            <button class="ghost" @click.stop="providerDraft = null">返回</button>
+            <button class="primary" @click.stop="saveProviderDraft" :disabled="providerBusy">{{ providerBusy ? '保存中…' : '保存' }}</button>
+          </div>
+        </template>
+      </div>
+    </div>
+  </transition>
 </div>
 <script src="/vendor/vue.min.js"></script>
 <script src="/app.js"></script>

@@ -560,6 +560,8 @@ go vet ./...
 - 会话列表在顶部时顶部栏渐变完全透明
 - 列表向上滚动后，顶部栏渐变随滚动距离逐渐恢复
 - 滚动回顶部时再次变为透明
+- Web 端企业级 UI/UX 重构：玻璃模糊、Markdown、表格、代码块、自定义下拉、新建会话、服务商管理、网页 ICON
+- 新品牌图标：纯白背景 + 绿色衬线 R
 
 ### 0.4.2 — 2026-11-14
 
@@ -758,7 +760,7 @@ go vet ./...
 | --- | --- |
 | `ReinChat-0.4.3.apk` | `008B1B024F2D5850303F8A20C94CBFBBC39B864ADF1AA29430EA612338C4F034` |
 | `ReinChat-0.4.3-debug.apk` | `3D547C085AA08B3A5D803642A6CECB9202C7A6964BB9E994881C62DD8EB571BF` |
-| `server/bin/reinchat-server-linux-amd64` | `51AB3495587AC1AC510E2874B7B7E74C19C745F27CFBA79CDD47A49AD7CF6ADC` |
+| `server/bin/reinchat-server-linux-amd64` | `DA1FA64A03D93D34ADEBE602BA6E7E23CFED227FF12A775E4A674505CFB2C21E` |
 
 ---
 

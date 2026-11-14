@@ -55,6 +55,7 @@ tools/mock_requests.log
 tools/cdp-*.mjs
 screenshots/17-web-live.png
 screenshots/19-web-e2e.png
+screenshots/2*.png
 
 # Generated desktop dependencies and output
 desktop/node_modules/

@@ -163,7 +163,9 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Path
 	switch path {
 	case "/", "/index.html", "/app.js", "/style.css", "/vendor/vue.min.js",
-		"/admin", "/admin.html", "/admin.js":
+		"/admin", "/admin.html", "/admin.js",
+		"/favicon.ico", "/icon.svg", "/icon-192.png", "/icon-512.png",
+		"/apple-touch-icon.png", "/site.webmanifest":
 		s.serveWeb(w, r)
 		return
 	}

@@ -28,6 +28,18 @@ func (s *Server) serveWeb(w http.ResponseWriter, r *http.Request) {
 		path = "web/admin.html"
 	case "/admin.js":
 		path = "web/admin.js"
+	case "/favicon.ico":
+		path = "web/favicon.ico"
+	case "/icon.svg":
+		path = "web/icon.svg"
+	case "/icon-192.png":
+		path = "web/icon-192.png"
+	case "/icon-512.png":
+		path = "web/icon-512.png"
+	case "/apple-touch-icon.png":
+		path = "web/apple-touch-icon.png"
+	case "/site.webmanifest":
+		path = "web/site.webmanifest"
 	default:
 		writeAPIError(w, http.StatusNotFound, "not_found", "page not found")
 		return
@@ -44,6 +56,14 @@ func (s *Server) serveWeb(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
 	case strings.HasSuffix(path, ".css"):
 		w.Header().Set("Content-Type", "text/css; charset=utf-8")
+	case strings.HasSuffix(path, ".svg"):
+		w.Header().Set("Content-Type", "image/svg+xml")
+	case strings.HasSuffix(path, ".png"):
+		w.Header().Set("Content-Type", "image/png")
+	case strings.HasSuffix(path, ".ico"):
+		w.Header().Set("Content-Type", "image/x-icon")
+	case strings.HasSuffix(path, ".webmanifest"):
+		w.Header().Set("Content-Type", "application/manifest+json")
 	}
 	_, _ = w.Write(data)
 }
