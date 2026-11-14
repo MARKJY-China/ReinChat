@@ -89,7 +89,15 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private val cloudApi = CloudApiClient()
     private val cloudMutex = Mutex()
 
-    private val initialSettings = settingsStore.load()
+    private val initialSettings = settingsStore.load().let { loaded ->
+        loaded.copy(providers = loaded.providers.map { provider ->
+            if (provider.reasoningEffort.isBlank()) {
+                provider.copy(reasoningEffort = "high")
+            } else {
+                provider
+            }
+        })
+    }
     private val initialConversations = conversationStore.load()
         .filter { !it.cloud || initialSettings.cloudAccount != null }
 
