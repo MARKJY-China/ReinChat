@@ -1,7 +1,7 @@
 # ReinChat 驭聊
 
 > 为 **HarmonyOS 7 · 卓易通** 打造的极简液态玻璃 AI 聊天客户端  
-> **v0.4.3** · Android (Kotlin + Jetpack Compose) · 可选自托管云端同步  
+> **v0.4.4** · Android (Kotlin + Jetpack Compose) · 可选自托管云端同步  
 > Windows 桌面版（Tauri 2.12）源码在 `desktop/`，开发暂缓，未纳入本次发布。
 
 <p align="center">
@@ -168,13 +168,13 @@ v0.2 增加了一套**可选**的账号系统，后端位于 [`server/`](server/
 ### 正式包
 
 ```text
-dist/ReinChat-0.4.3.apk
+dist/ReinChat-0.4.4.apk
 ```
 
 已使用项目内 release keystore 签名，可直接侧载：
 
 ```bash
-adb install -r dist/ReinChat-0.4.3.apk
+adb install -r dist/ReinChat-0.4.4.apk
 ```
 
 Release 证书 SHA-256：
@@ -186,7 +186,7 @@ Release 证书 SHA-256：
 ### 调试包（与正式包可共存）
 
 ```text
-dist/ReinChat-0.4.3-debug.apk
+dist/ReinChat-0.4.4-debug.apk
 ```
 
 包名为 `com.reinchat.app.debug`。调试包额外包含演示 seed Activity，不进入 release。
@@ -555,6 +555,15 @@ go vet ./...
 
 ## 版本
 
+### 0.4.4 — 2026-11-15
+
+- Web 流式输出修复：搜索模式下最终回答重新逐段推送
+- 思考/生成状态移入消息区，不再显示在输入栏
+- 会话级流式任务：切换会话仍可在其他会话输入
+- 修复切换会话后保存错会话导致的 `invalid_json`
+- 联网默认开启，思考程度默认 `high`
+- App 同步默认开启联网、新服务商默认思考高
+
 ### 0.4.3 — 2026-11-14
 
 - 会话列表在顶部时顶部栏渐变完全透明
@@ -746,8 +755,8 @@ go vet ./...
 
 ## 交付文件
 
-- `dist/ReinChat-0.4.3.apk` — Android release，正式侧载
-- `dist/ReinChat-0.4.3-debug.apk` — Android 调试包，与正式包可共存
+- `dist/ReinChat-0.4.4.apk` — Android release，正式侧载
+- `dist/ReinChat-0.4.4-debug.apk` — Android 调试包，与正式包可共存
 - `desktop/` — Tauri 桌面端源码（开发暂缓，未提供安装包）
 - `server/` — Go 后端源码、测试、Docker/Caddy 部署文件
 - `deploy.sh` — 当前 1Panel 生产环境的一键构建、上传、systemd 部署脚本
@@ -758,9 +767,9 @@ go vet ./...
 
 | 文件 | SHA-256 |
 | --- | --- |
-| `ReinChat-0.4.3.apk` | `008B1B024F2D5850303F8A20C94CBFBBC39B864ADF1AA29430EA612338C4F034` |
-| `ReinChat-0.4.3-debug.apk` | `3D547C085AA08B3A5D803642A6CECB9202C7A6964BB9E994881C62DD8EB571BF` |
-| `server/bin/reinchat-server-linux-amd64` | `DA1FA64A03D93D34ADEBE602BA6E7E23CFED227FF12A775E4A674505CFB2C21E` |
+| `ReinChat-0.4.4.apk` | `8FE711474CC2742A81049D1002B52A59E4731F2A4AA2D5459A6940378EC60FD9` |
+| `ReinChat-0.4.4-debug.apk` | `E265834ACBCD11DCD61AA80B4B7C34CE4317AAA72394060F0F3536346998217C` |
+| `server/bin/reinchat-server-linux-amd64` | `9A27B1F6E2C7089E978E553AD5360AB60334CD47F48D0244272036522BE341FA` |
 
 ---
 

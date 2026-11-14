@@ -46,12 +46,13 @@
         providers: [],
         providerId: '',
         model: '',
-        reasoningEffort: '',
-        search: false,
+        reasoningEffort: 'high',
+        search: true,
         draft: '',
-        sending: false,
         editingId: '',
         jobAssistError: '',
+        conversationCache: {},
+        streams: {},
         openMenu: '',
         sidebarOpen: false,
         providerModal: false,
@@ -73,6 +74,12 @@
         const p = this.providers.find(function (item) { return item.id === this.providerId; }.bind(this));
         if (!p) return [];
         return (p.model || '').split(',').map(function (m) { return m.trim(); }).filter(Boolean);
+      },
+      activeStreaming: function () {
+        return !!(this.activeId && this.streams[this.activeId]);
+      },
+      sending: function () {
+        return this.activeStreaming;
       },
       selectedProviderName: function () {
         const p = this.providers.find(function (item) { return item.id === this.providerId; }.bind(this));
@@ -181,9 +188,10 @@
         this.model = '';
         this.reasoningEffort = '';
         this.draft = '';
-        this.sending = false;
         this.jobAssistError = '';
         this.openMenu = '';
+        this.conversationCache = {};
+        this.streams = {};
         this.sidebarOpen = false;
         this.providerModal = false;
         this.providerDraft = null;
@@ -270,7 +278,6 @@
         this.openMenu = '';
       },
       newConversation: function () {
-        if (this.sending) return;
         const now = Date.now();
         this.active = {
           id: this.uuid(),
@@ -281,6 +288,7 @@
           messages: [],
         };
         this.activeId = this.active.id;
+        this.conversationCache[this.active.id] = this.active;
         this.draft = '';
         this.editingId = '';
         this.follow = true;
@@ -367,7 +375,6 @@
         const text = this.draft.trim();
         if (!text || this.sending || this.level < 2 || !this.providerId) return;
         this.jobAssistError = '';
-        this.sending = true;
         this.draft = '';
         if (!this.active) {
           this.active = {
@@ -380,6 +387,8 @@
           };
           this.activeId = this.active.id;
         }
+        const conversation = this.active;
+        this.conversationCache[conversation.id] = conversation;
         if (this.editingId) {
           const editIndex = this.active.messages.findIndex(function (m) { return m.id === this.editingId; }.bind(this));
           if (editIndex >= 0) this.active.messages = this.active.messages.slice(0, editIndex);
@@ -392,17 +401,21 @@
         };
         const assistant = {
           id: this.uuid(), role: 'assistant', content: '', reasoning: '', images: [],
-          createdAt: now + 1, status: 'COMPLETE', error: null,
+          createdAt: now + 1, status: 'COMPLETE', error: null, streaming: true,
         };
-        this.active.messages.push(userMessage, assistant);
-        if (!this.active.title || this.active.title === '新会话') {
-          this.active.title = text.slice(0, 40);
+        conversation.messages.push(userMessage, assistant);
+        if (!conversation.title || conversation.title === '新会话') {
+          conversation.title = text.slice(0, 40);
         }
-        this.active.updatedAt = now;
+        conversation.updatedAt = now;
+        this.$set(this.streams, conversation.id, {
+          assistantId: assistant.id,
+          startedAt: now,
+        });
         this.follow = true;
         this.$nextTick(this.scrollToBottom);
         try {
-          const history = this.active.messages
+          const history = conversation.messages
             .filter(function (m) { return m !== assistant && (m.content || '').trim(); })
             .map(function (m) {
               return {
@@ -414,22 +427,22 @@
             method: 'POST',
             body: {
               providerId: this.providerId,
-              conversationId: this.active.id,
+              conversationId: conversation.id,
               model: this.model,
               reasoningEffort: this.reasoningEffort,
               search: this.search,
               messages: history,
             },
           });
-          await this.streamRelay(job.id, assistant);
-          await this.persistConversation();
+          await this.streamRelay(job.id, assistant, conversation.id);
+          await this.persistConversation(conversation.id);
         } catch (e) {
           assistant.error = e.message || '生成失败';
           assistant.status = 'ERROR';
-          this.jobAssistError = assistant.error;
-          try { await this.persistConversation(); } catch (ignored) { /* keep local */ }
+          if (this.activeId === conversation.id) this.jobAssistError = assistant.error;
+          try { await this.persistConversation(conversation.id); } catch (ignored) { /* keep local */ }
         } finally {
-          this.sending = false;
+          this.finishStream(conversation.id, assistant);
         }
       },
       beginEdit: function (message) {
@@ -446,23 +459,28 @@
       },
       retryMessage: async function (index) {
         if (this.sending || !this.active) return;
-        const target = this.active.messages[index];
+        const conversation = this.active;
+        const target = conversation.messages[index];
         if (!target || target.role !== 'assistant') return;
         let userIndex = -1;
         for (let i = index - 1; i >= 0; i--) {
-          if (this.active.messages[i].role === 'user') { userIndex = i; break; }
+          if (conversation.messages[i].role === 'user') { userIndex = i; break; }
         }
         if (userIndex < 0) return;
-        this.active.messages = this.active.messages.slice(0, userIndex + 1);
+        conversation.messages = conversation.messages.slice(0, userIndex + 1);
         const assistant = {
           id: this.uuid(), role: 'assistant', content: '', reasoning: '', images: [],
-          createdAt: Date.now(), status: 'COMPLETE', error: null,
+          createdAt: Date.now(), status: 'COMPLETE', error: null, streaming: true,
         };
-        this.active.messages.push(assistant);
-        this.sending = true;
+        conversation.messages.push(assistant);
+        this.conversationCache[conversation.id] = conversation;
+        this.$set(this.streams, conversation.id, {
+          assistantId: assistant.id,
+          startedAt: Date.now(),
+        });
         this.follow = true;
         this.$nextTick(this.scrollToBottom);
-        const history = this.active.messages
+        const history = conversation.messages
           .filter(function (m) { return m !== assistant && (m.content || '').trim(); })
           .map(function (m) {
             return {
@@ -475,35 +493,39 @@
             method: 'POST',
             body: {
               providerId: this.providerId,
-              conversationId: this.active.id,
+              conversationId: conversation.id,
               model: this.model,
               reasoningEffort: this.reasoningEffort,
               search: this.search,
               messages: history,
             },
           });
-          await this.streamRelay(job.id, assistant);
-          await this.persistConversation();
+          await this.streamRelay(job.id, assistant, conversation.id);
+          await this.persistConversation(conversation.id);
         } catch (e) {
           assistant.error = e.message || '生成失败';
           assistant.status = 'ERROR';
-          this.jobAssistError = assistant.error;
-          try { await this.persistConversation(); } catch (ignored) { /* keep local */ }
+          try { await this.persistConversation(conversation.id); } catch (ignored) { /* keep local */ }
         } finally {
-          this.sending = false;
+          this.finishStream(conversation.id, assistant);
         }
       },
       rewindMessage: async function (index) {
         if (this.sending || !this.active || index >= this.active.messages.length - 1) return;
         this.active.messages = this.active.messages.slice(0, index + 1);
         this.active.updatedAt = Date.now();
+        this.conversationCache[this.active.id] = this.active;
         try {
-          await this.persistConversation();
+          await this.persistConversation(this.active.id);
         } catch (e) {
           this.jobAssistError = e.message;
         }
       },
-      streamRelay: function (jobId, assistant) {
+      finishStream: function (conversationId, assistant) {
+        if (assistant) assistant.streaming = false;
+        this.$delete(this.streams, conversationId);
+      },
+      streamRelay: function (jobId, assistant, conversationId) {
         return new Promise(async (resolve, reject) => {
           let finalStatus = '';
           try {
@@ -532,10 +554,10 @@
                   assistant.content = event.text || '';
                   assistant.reasoning = event.reasoning || '';
                   finalStatus = event.status || '';
-                  if (this.follow) this.$nextTick(this.scrollToBottom);
+                  if (this.activeId === conversationId && this.follow) this.$nextTick(this.scrollToBottom);
                 } else if (event.type === 'delta') {
                   assistant.content = (assistant.content || '') + (event.text || '');
-                  if (this.follow) this.$nextTick(this.scrollToBottom);
+                  if (this.activeId === conversationId && this.follow) this.$nextTick(this.scrollToBottom);
                 } else if (event.type === 'reasoning') {
                   assistant.reasoning = (assistant.reasoning || '') + (event.text || '');
                 } else if (event.type === 'error') {
@@ -558,15 +580,17 @@
           }
         });
       },
-      persistConversation: async function () {
-        if (!this.active) return;
+      persistConversation: async function (conversationId) {
+        const id = conversationId || (this.active && this.active.id);
+        const conversation = id ? (this.conversationCache[id] || (this.active && this.active.id === id ? this.active : null)) : null;
+        if (!conversation) return;
         const now = Date.now();
         const convo = {
-          id: this.active.id,
-          title: this.active.title || '新会话',
-          createdAt: this.active.createdAt || now,
+          id: conversation.id,
+          title: conversation.title || '新会话',
+          createdAt: conversation.createdAt || now,
           updatedAt: now,
-          messages: this.active.messages.map(function (m) {
+          messages: conversation.messages.map(function (m) {
             return {
               id: m.id, role: m.role, content: m.content || '', images: m.images || [],
               createdAt: m.createdAt, status: m.status || 'COMPLETE', error: m.error || null,
@@ -574,23 +598,31 @@
           }),
         };
         let saved;
-        if (!this.active.version) {
+        if (!conversation.version) {
           saved = await this.api('/v1/conversations', { method: 'POST', body: convo });
         } else {
-          saved = await this.api('/v1/conversations/' + encodeURIComponent(this.active.id), {
+          saved = await this.api('/v1/conversations/' + encodeURIComponent(conversation.id), {
             method: 'PUT',
-            body: Object.assign({}, convo, { baseVersion: this.active.version }),
+            body: Object.assign({}, convo, { baseVersion: conversation.version }),
           });
         }
-        if (this.activeId === saved.id) this.active = Object.assign({}, saved, {
-          messages: saved.messages || this.active.messages,
+        const merged = Object.assign({}, saved, {
+          messages: saved.messages || conversation.messages,
         });
+        this.$set(this.conversationCache, merged.id, merged);
+        if (this.activeId === merged.id) this.active = merged;
         await this.refreshAll();
       },
       openConversation: async function (id, silent) {
         if (!silent) this.activeId = id;
+        if (this.conversationCache[id] && this.streams[id]) {
+          this.active = this.conversationCache[id];
+          this.$nextTick(this.scrollToBottom);
+          return;
+        }
         try {
           const data = await this.api('/v1/conversations/' + encodeURIComponent(id));
+          this.$set(this.conversationCache, id, data);
           if (this.activeId === id) {
             this.active = data;
             this.$nextTick(this.scrollToBottom);
@@ -651,6 +683,8 @@
           return;
         }
         if (event.type === 'conversation.deleted') {
+          this.$delete(this.conversationCache, event.conversationId);
+          this.$delete(this.streams, event.conversationId);
           if (this.activeId === event.conversationId) {
             this.activeId = '';
             this.active = null;

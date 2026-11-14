@@ -237,6 +237,8 @@ func (s *Server) streamAgentAnswerDepth(ctx context.Context, jobID string, p *re
 	scanner := bufio.NewScanner(resp.Body)
 	scanner.Buffer(make([]byte, 64<<10), 2<<20)
 	var text, reasoning strings.Builder
+	var published strings.Builder
+	streamed := false
 	lastSave := time.Now()
 	for scanner.Scan() {
 		if ctx.Err() != nil {
@@ -259,9 +261,17 @@ func (s *Server) streamAgentAnswerDepth(ctx context.Context, jobID string, p *re
 		deltaText, deltaReasoning, _ := parseRelayDelta("CHAT_COMPLETIONS", data)
 		if deltaText != "" {
 			text.WriteString(deltaText)
+			if !strings.Contains(strings.ToLower(text.String()), "dsml") {
+				published.WriteString(deltaText)
+				streamed = true
+				s.relay.publish(jobID, relayEvent{Type: "delta", Text: deltaText})
+			}
 		}
 		if deltaReasoning != "" {
 			reasoning.WriteString(deltaReasoning)
+			if !strings.Contains(strings.ToLower(reasoning.String()), "dsml") {
+				s.relay.publish(jobID, relayEvent{Type: "reasoning", Text: deltaReasoning})
+			}
 		}
 		if time.Since(lastSave) > 200*time.Millisecond {
 			textNow, reasoningNow := text.String(), reasoning.String()
@@ -294,10 +304,13 @@ func (s *Server) streamAgentAnswerDepth(ctx context.Context, jobID string, p *re
 	cleanText := cleanDSMLText(rawText)
 	cleanReasoning := cleanDSMLText(rawReasoning)
 	_ = s.updateRelayJob(jobID, "completed", &cleanText, &cleanReasoning, "")
-	if cleanText != "" {
-		s.relay.publish(jobID, relayEvent{Type: "delta", Text: cleanText})
+	if cleanText != "" && (!streamed || published.String() != cleanText) {
+		// Only send a final snapshot when the stream was suppressed by DSML.
+		if !streamed {
+			s.relay.publish(jobID, relayEvent{Type: "delta", Text: cleanText})
+		}
 	}
-	if cleanReasoning != "" {
+	if cleanReasoning != "" && strings.Contains(strings.ToLower(rawReasoning), "dsml") {
 		s.relay.publish(jobID, relayEvent{Type: "reasoning", Text: cleanReasoning})
 	}
 	s.relay.publish(jobID, relayEvent{Type: "status", Status: "completed"})

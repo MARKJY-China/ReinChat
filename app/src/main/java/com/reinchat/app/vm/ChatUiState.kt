@@ -22,7 +22,7 @@ data class ChatUiState(
     val attachments: List<ChatImage> = emptyList(),
     val editingMessageId: String? = null,
     val importingImage: Boolean = false,
-    val webSearch: Boolean = false,
+    val webSearch: Boolean = true,
     val streaming: StreamingSession? = null,
     val newChatCloud: Boolean = false,
     val cloudSyncing: Boolean = false,

@@ -107,6 +107,7 @@
                   <pre>{{ cleanText(m.reasoning) }}</pre>
                 </details>
                 <div class="msg-body markdown-body" v-html="renderMarkdown(m.content)"></div>
+                <div class="msg-stream" v-if="m.streaming"><span class="stream-dot"></span>{{ m.content ? '正在生成…' : '正在思考…' }}</div>
                 <div class="msg-error" v-if="m.error">{{ m.error }}</div>
                 <div class="msg-tools" v-if="!sending">
                   <button v-if="m.role === 'user'" @click.stop="beginEdit(m)">编辑</button>
@@ -177,8 +178,7 @@
             <div class="composer-hint">
               <span v-if="level < 2">LV2 才能使用服务端 AI 中转，请先申请升级。</span>
               <span v-else-if="!providers.length">先添加一个服务商配置。</span>
-              <span v-else-if="jobAssistError" class="error">{{ jobAssistError }}</span>
-              <span v-else>{{ sending ? 'ReinChat 正在思考…' : '通过服务端中转 · ' + (model || '未选择模型') }}</span>
+              <span v-else>通过服务端中转 · {{ model || '未选择模型' }}</span>
             </div>
             <div class="composer-buttons">
               <button v-if="editingId" class="ghost small" @click.stop="cancelEdit">取消</button>

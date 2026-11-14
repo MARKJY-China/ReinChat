@@ -106,7 +106,7 @@ data class ProviderConfig(
     /** Local selection; model itself may contain a comma-separated list. */
     val selectedModel: String = "",
     /** "", "low", "high" or "max"; sent as reasoning_effort when set. */
-    val reasoningEffort: String = "",
+    val reasoningEffort: String = "high",
     /** Local-only providers are never uploaded to the account. */
     val localOnly: Boolean = true,
     /** True after the cloud copy is known to match this local copy. */
