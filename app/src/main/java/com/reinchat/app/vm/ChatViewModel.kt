@@ -1476,6 +1476,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 id = message.id.ifBlank { newId() },
                 role = message.roleEnum(),
                 content = message.content,
+                reasoning = message.reasoning,
                 images = images,
                 createdAt = message.createdAt.takeIf { it > 0 } ?: System.currentTimeMillis(),
                 status = message.statusEnum(),

@@ -38,6 +38,7 @@ type MessageDTO struct {
 	ID        string     `json:"id"`
 	Role      string     `json:"role"`
 	Content   string     `json:"content"`
+	Reasoning string     `json:"reasoning,omitempty"`
 	Images    []ImageDTO `json:"images"`
 	CreatedAt int64      `json:"createdAt"`
 	Status    string     `json:"status"`

@@ -592,8 +592,8 @@
           updatedAt: now,
           messages: conversation.messages.map(function (m) {
             return {
-              id: m.id, role: m.role, content: m.content || '', images: m.images || [],
-              createdAt: m.createdAt, status: m.status || 'COMPLETE', error: m.error || null,
+              id: m.id, role: m.role, content: m.content || '', reasoning: m.reasoning || '',
+              images: m.images || [], createdAt: m.createdAt, status: m.status || 'COMPLETE', error: m.error || null,
             };
           }),
         };
@@ -603,7 +603,13 @@
         } else {
           saved = await this.api('/v1/conversations/' + encodeURIComponent(conversation.id), {
             method: 'PUT',
-            body: Object.assign({}, convo, { baseVersion: conversation.version }),
+            body: {
+              baseVersion: conversation.version,
+              title: convo.title,
+              createdAt: convo.createdAt,
+              updatedAt: convo.updatedAt,
+              messages: convo.messages,
+            },
           });
         }
         const merged = Object.assign({}, saved, {

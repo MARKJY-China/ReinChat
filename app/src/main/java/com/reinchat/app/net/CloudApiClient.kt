@@ -111,6 +111,7 @@ data class CloudMessageDto(
     val id: String,
     val role: String,
     val content: String = "",
+    val reasoning: String = "",
     val images: List<CloudImageRefDto> = emptyList(),
     val createdAt: Long = 0,
     val status: String = "COMPLETE",
@@ -529,6 +530,7 @@ class CloudApiClient {
         id = message.id,
         role = message.role.name.lowercase(),
         content = message.content,
+        reasoning = message.reasoning,
         images = message.images.map { image ->
             CloudImageRefDto(
                 id = image.id,
