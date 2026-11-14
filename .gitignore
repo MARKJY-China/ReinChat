@@ -1,0 +1,62 @@
+# Android / Gradle build output
+.gradle/
+.kotlin/
+build/
+**/build/
+captures/
+.externalNativeBuild/
+.cxx/
+*.apk
+*.aab
+*.ap_
+*.dex
+*.class
+
+# Local Android configuration and signing secrets
+local.properties
+keystore.properties
+keystore/
+*.jks
+*.keystore
+*.p12
+*.pem
+*.key
+
+# Environment and server runtime data
+.env
+.env.*
+!.env.example
+server/.env
+server/data/
+server/dev-data/
+server/dev-master-key.txt
+server/bin/
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+
+# Local deployment/build artifacts
+build/deploy/
+dist/
+shots/
+
+# IDE and OS
+.idea/
+*.iml
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Local verification / temporary tooling
+app040.png
+web-live-logged-in.png
+tools/mock_requests.log
+tools/cdp-*.mjs
+screenshots/17-web-live.png
+screenshots/19-web-e2e.png
+
+# Generated desktop dependencies and output
+desktop/node_modules/
+desktop/dist/
+desktop/src-tauri/target/

@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>ReinChat · Web</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div id="app" v-cloak>
+  <div v-if="!token" class="login-shell">
+    <div class="login-card">
+      <div class="brand"><span class="orb">R</span><span>ReinChat <small>Web</small></span></div>
+      <p class="muted">与 App 使用同一个账号，实时同步云端会话。</p>
+      <label>服务器</label>
+      <input v-model.trim="server" placeholder="https://reinchat.markjy.com" autocomplete="url">
+      <label>用户名</label>
+      <input v-model.trim="username" placeholder="用户名" autocomplete="username">
+      <label>密码</label>
+      <input v-model="password" type="password" placeholder="密码" autocomplete="current-password" @keyup.enter="submitAuth">
+      <p class="error" v-if="error">{{ error }}</p>
+      <div class="row">
+        <button class="primary" @click="submitAuth" :disabled="busy">{{ busy ? '连接中…' : (mode === 'login' ? '登录' : '注册') }}</button>
+        <button class="ghost" @click="mode = mode === 'login' ? 'register' : 'login'">{{ mode === 'login' ? '注册账号' : '已有账号' }}</button>
+      </div>
+    </div>
+  </div>
+
+  <div v-else class="app-shell">
+    <aside class="sidebar">
+      <div class="brand small"><span class="orb">R</span><span>ReinChat</span></div>
+      <div class="userline"><span>{{ user }} · LV{{ level }}</span><button class="link" @click="logout">退出</button></div>
+      <div class="account-card">
+        <div v-if="pendingRequest" class="muted">LV2 工单审核中</div>
+        <template v-else-if="level < 2">
+          <textarea v-model="upgradeReason" placeholder="申请 LV2 的理由（10 字以上）"></textarea>
+          <button class="ghost small" @click="submitUpgrade" :disabled="upgradeBusy">申请升级</button>
+        </template>
+        <div v-else class="muted">LV2 · 服务端中转可用</div>
+        <a class="link admin-link" href="/admin">管理控制台</a>
+      </div>
+      <p class="error" v-if="upgradeError">{{ upgradeError }}</p>
+      <button class="refresh" @click="refreshAll" :disabled="loading">刷新会话</button>
+      <div class="conv-list">
+        <button v-for="c in conversations" :key="c.id" class="conv" :class="{active: c.id === activeId}" @click="openConversation(c.id)">
+          <span class="conv-title">{{ c.title || '未命名会话' }}</span>
+          <span class="conv-preview">{{ cleanText(c.preview) }}</span>
+          <span class="conv-meta">{{ formatTime(c.updatedAt) }} · v{{ c.version }}</span>
+        </button>
+        <p class="empty" v-if="!conversations.length">还没有云端会话</p>
+      </div>
+    </aside>
+
+    <main class="chat">
+      <header class="chat-head">
+        <span class="sync" :class="syncState">{{ syncLabel }}</span>
+        <h1>{{ active ? (active.title || '未命名会话') : '选择会话' }}</h1>
+        <span class="muted" v-if="active">v{{ active.version }} · {{ active.messages.length }} 条消息</span>
+      </header>
+
+      <section class="messages" ref="messages" @scroll="onMessagesScroll">
+        <template v-if="active">
+          <article v-for="(m, mi) in active.messages" :key="m.id" class="msg" :class="m.role">
+            <div class="msg-role">{{ m.role === 'user' ? '你' : 'ReinChat' }}<span>{{ formatTime(m.createdAt) }}</span></div>
+            <details class="reasoning" v-if="m.reasoning">
+              <summary>思考过程</summary>
+              <pre>{{ cleanText(m.reasoning) }}</pre>
+            </details>
+            <div class="msg-body">{{ cleanText(m.content) }}</div>
+            <div class="msg-error" v-if="m.error">{{ m.error }}</div>
+            <div class="msg-tools" v-if="!sending">
+              <button v-if="m.role === 'user'" @click="beginEdit(m)">编辑</button>
+              <button v-if="m.role === 'assistant'" @click="retryMessage(mi)">重试</button>
+              <button v-if="mi < active.messages.length - 1" @click="rewindMessage(mi)">回退到此处</button>
+            </div>
+          </article>
+          <p class="empty" v-if="!active.messages.length">这个会话还没有消息</p>
+        </template>
+        <p class="empty" v-else>从左侧选择一个云端会话。App 里的新消息会实时出现在这里。</p>
+      </section>
+
+      <button v-show="!atBottom" class="scroll-bottom" @click="jumpToBottom" title="回到最新">↓</button>
+      <footer class="composer">
+        <div class="composer-row">
+          <select v-model="providerId" :disabled="sending || level < 2">
+            <option value="">选择服务商</option>
+            <option v-for="p in providers" :key="p.id" :value="p.id">{{ p.name }}</option>
+          </select>
+          <select v-model="model" :disabled="sending || level < 2 || !modelOptions.length">
+            <option v-for="m in modelOptions" :key="m" :value="m">{{ m }}</option>
+          </select>
+          <select v-model="reasoningEffort" :disabled="sending || level < 2">
+            <option value="">思考：自动</option>
+            <option value="low">思考：低</option>
+            <option value="high">思考：高</option>
+            <option value="max">思考：最高</option>
+          </select>
+          <label class="search-toggle" :class="{on: search}" title="让服务端检索网页">
+            <input type="checkbox" v-model="search" :disabled="sending || level < 2"> 联网
+          </label>
+          <textarea ref="draft" v-model="draft" rows="2" placeholder="给 ReinChat 发送消息…" @keydown.enter.exact.prevent="sendMessage"></textarea>
+          <button v-if="editingId" class="ghost" @click="cancelEdit">取消</button>
+          <button class="primary send" @click="sendMessage" :disabled="sending || !draft.trim() || level < 2 || !providerId">
+            {{ sending ? '生成中…' : (editingId ? '重新发送' : '发送') }}
+          </button>
+        </div>
+        <div class="composer-hint">
+          <span v-if="level < 2">LV2 才能使用服务端 AI 中转，请先申请升级。</span>
+          <span v-else-if="!providers.length">先在 App 中同步一个非“仅本地”的服务商配置。</span>
+          <span v-else-if="jobAssistError" class="error">{{ jobAssistError }}</span>
+          <span v-else>通过 ReinChat 服务端中转 · {{ model || '未选择模型' }}</span>
+        </div>
+      </footer>
+    </main>
+  </div>
+</div>
+<script src="/vendor/vue.min.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>

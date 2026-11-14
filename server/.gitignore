@@ -1,0 +1,9 @@
+.env
+/data/
+/dev-data/
+/dev-master-key.txt
+*.exe
+reinchat-server
+*.db
+*.db-wal
+*.db-shm

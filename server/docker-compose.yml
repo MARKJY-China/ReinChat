@@ -1,0 +1,63 @@
+name: reinchat
+
+services:
+  app:
+    build:
+      context: .
+    image: reinchat-server:local
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 20s
+    environment:
+      REINCHAT_ADDR: ":8080"
+      REINCHAT_DATA_DIR: "/data"
+      REINCHAT_MASTER_KEY: "${REINCHAT_MASTER_KEY:?set REINCHAT_MASTER_KEY in .env (openssl rand -base64 32)}"
+      REINCHAT_TOKEN_TTL_HOURS: "${REINCHAT_TOKEN_TTL_HOURS:-720}"
+      REINCHAT_ADMIN_TOKEN: "${REINCHAT_ADMIN_TOKEN:-}"
+    volumes:
+      - data:/data
+    expose:
+      - "8080"
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks:
+      - backend
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - app
+    networks:
+      - backend
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  data:
+  caddy_data:
+  caddy_config:
+
+networks:
+  backend:

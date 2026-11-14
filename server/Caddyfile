@@ -1,0 +1,18 @@
+reinchat.markjy.com {
+	encode zstd gzip
+
+	reverse_proxy app:8080 {
+		# Caddy overwrites this header with the real client address. The app
+		# trusts it only because port 8080 is never published directly.
+		header_up X-Real-IP {remote_host}
+	}
+
+	header {
+		-Server
+	}
+
+	log {
+		output stdout
+		format console
+	}
+}

@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ReinChat Admin</title>
+  <link rel="stylesheet" href="/style.css">
+  <style>
+    .admin-shell { max-width: 1100px; margin: 0 auto; padding: 30px 20px 60px; }
+    .admin-card { background: rgba(10,21,17,.92); border: 1px solid var(--line); border-radius: 18px; padding: 18px; margin: 18px 0; }
+    .admin-card h2 { margin: 0 0 12px; font-size: 16px; }
+    .admin-card input { padding: 9px 12px; color: var(--text); background: rgba(255,255,255,.05); border: 1px solid var(--line); border-radius: 10px; }
+    .ticket { border-bottom: 1px solid var(--line); padding: 12px 0; }
+    .ticket:last-child { border: 0; }
+    .ticket .meta { color: var(--muted); font-size: 12px; }
+    .ticket .reason { margin: 6px 0; white-space: pre-wrap; }
+    .ticket .actions { display: flex; gap: 8px; margin-top: 8px; }
+    .ticket .actions input { flex: 1; }
+    .ticket .status { color: var(--mint); font-size: 12px; }
+    .users td, .users th { padding: 8px; border-bottom: 1px solid var(--line); text-align: left; }
+    .users { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .topbar { display: flex; gap: 10px; align-items: center; justify-content: space-between; }
+  </style>
+</head>
+<body>
+<div id="app" v-cloak class="admin-shell">
+  <div class="topbar">
+    <h1>ReinChat Admin</h1>
+    <a href="/" class="link">返回聊天</a>
+  </div>
+
+  <div v-if="!token" class="admin-card">
+    <h2>管理员登录</h2>
+    <p class="muted">输入服务端 `REINCHAT_ADMIN_TOKEN`。不会被写入服务端日志。</p>
+    <input v-model="tokenInput" type="password" placeholder="Admin token" style="width:100%">
+    <div class="actions" style="margin-top:10px"><button class="primary" @click="login">进入控制台</button></div>
+    <p class="error">{{ error }}</p>
+  </div>
+
+  <template v-else>
+    <div class="admin-card">
+      <div class="topbar">
+        <h2>升级工单</h2>
+        <div class="row">
+          <button class="ghost" @click="loadTickets('pending')">待审核</button>
+          <button class="ghost" @click="loadTickets('')">全部</button>
+          <button class="ghost" @click="logout">退出</button>
+        </div>
+      </div>
+      <p class="error">{{ error }}</p>
+      <div v-for="t in tickets" :key="t.id" class="ticket">
+        <div class="meta">{{ t.username }} · {{ t.fromLevel }} → {{ t.toLevel }} · {{ formatTime(t.createdAt) }}
+          <span class="status"> · {{ t.status }}</span>
+        </div>
+        <div class="reason">{{ t.reason }}</div>
+        <div class="meta" v-if="t.rejectReason">拒绝理由：{{ t.rejectReason }}</div>
+        <div class="meta" v-if="t.adminNote">备注：{{ t.adminNote }}</div>
+        <div class="actions" v-if="t.status === 'pending'">
+          <input v-model="notes[t.id]" placeholder="备注（可选）">
+          <button class="primary" @click="review(t, 'approve')">通过</button>
+          <button class="ghost" @click="review(t, 'reject')">拒绝</button>
+        </div>
+      </div>
+      <p class="empty" v-if="!tickets.length">没有工单</p>
+    </div>
+
+    <div class="admin-card">
+      <h2>用户</h2>
+      <div class="row" style="margin-bottom:10px">
+        <input v-model="query" placeholder="搜索用户名" @keyup.enter="loadUsers">
+        <button class="ghost" @click="loadUsers">搜索</button>
+      </div>
+      <table class="users">
+        <thead><tr><th>ID</th><th>用户名</th><th>等级</th><th>待审</th><th></th></tr></thead>
+        <tbody>
+          <tr v-for="u in users" :key="u.id">
+            <td>{{ u.id }}</td><td>{{ u.username }}</td>
+            <td><select v-model.number="u.level" @change="setLevel(u)"><option :value="1">LV1</option><option :value="2">LV2</option></select></td>
+            <td>{{ u.pendingUpgrade ? '是' : '' }}</td>
+            <td><span class="muted">{{ formatTime(u.createdAt) }}</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </template>
+</div>
+<script src="/vendor/vue.min.js"></script>
+<script src="/admin.js"></script>
+</body>
+</html>

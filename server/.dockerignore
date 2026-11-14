@@ -1,0 +1,15 @@
+.git
+.gitignore
+.env
+.env.*
+!.env.example
+bin/
+data/
+dev-data/
+dev-master-key.txt
+*.exe
+*_test.go
+README.md
+Dockerfile
+docker-compose.yml
+Caddyfile
