@@ -16,7 +16,7 @@
       </div>
     </div>
     <div class="prose" v-html="html"></div>
-    <div class="stream-line" v-if="message.streaming"><span></span>正在生成</div>
+    <div class="stream-line" v-if="message.streaming"><span></span>{{ streamPhase === 'streaming' ? 'AI 正在输出' : '请求服务端中' }}<button class="stream-stop" @click="$emit('stop')">停止</button></div>
     <div class="turn-error" v-if="message.error">
       <strong>生成失败</strong>
       <details><summary>查看详情</summary><pre>{{ message.error }}</pre></details>
@@ -33,7 +33,7 @@
 import { renderMarkdown } from '../lib/markdown';
 export default {
   name: 'MessageItem',
-  props: { message: { type: Object, required: true }, streaming: Boolean },
+  props: { message: { type: Object, required: true }, streaming: Boolean, streamPhase: { type: String, default: '' } },
   computed: { html() { return renderMarkdown(this.message.content); } },
   methods: {
     formatTime(ms) {

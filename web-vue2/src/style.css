@@ -197,7 +197,11 @@ a { color: inherit; }
 .composer-settings { display: flex; align-items: center; gap: 2px; min-width: 0; flex-wrap: wrap; }
 .send-btn { display: grid; place-items: center; flex: 0 0 auto; width: 31px; height: 31px; border: 0; border-radius: 9px; background: var(--ink); color: var(--white); font-size: 17px; transition: transform .16s var(--ease), background .16s; }
 .send-btn:hover:not(:disabled) { background: #2d2d27; transform: translateY(-1px); }
+.send-btn.stop { background: var(--ink); }
+.stop-square { width: 9px; height: 9px; border-radius: 2px; background: var(--white); }
 .spinner { width: 12px; height: 12px; border: 1.5px solid rgba(255,255,255,.35); border-top-color: #fff; border-radius: 50%; animation: spin .7s linear infinite; }
+.stream-stop { border: 0; background: transparent; color: #9a958b; font-size: 10.5px; padding: 0 0 0 9px; }
+.stream-stop:hover { color: var(--danger); }
 .composer-hint { width: min(760px, 100%); margin: 7px auto 0; color: #aaa59a; font-size: 10px; text-align: right; }
 .chip { border: 0; background: transparent; color: #969187; padding: 4px 6px; border-radius: 6px; font-size: 11px; }
 .chip:hover { color: var(--ink); background: var(--paper); }

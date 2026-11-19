@@ -43,7 +43,7 @@
       <section class="thread" ref="messages">
         <div class="thread-inner">
           <template v-if="active">
-            <MessageItem v-for="(m, index) in active.messages" :key="m.id" :message="m" :streaming="sending" @retry="retry(m)" @edit="beginEdit" @rewind="rewind(index)" />
+            <MessageItem v-for="(m, index) in active.messages" :key="m.id" :message="m" :streaming="sending" :stream-phase="streamPhase" @retry="retry(m)" @edit="beginEdit" @rewind="rewind(index)" @stop="stopGeneration" />
             <div class="welcome" v-if="!active.messages.length">
               <p class="eyebrow">New conversation</p>
               <h1>今天想聊什么？</h1>
@@ -63,7 +63,7 @@
         :provider-id="providerId" :model="model" :reasoning-effort="reasoningEffort" :search="search" :draft="draft" :sending="sending" :level="level"
         :provider-options="providerOptions" :model-options="modelOptions" :reasoning-options="reasoningOptions"
         @update:providerId="setProvider" @update:model="model = $event" @update:reasoningEffort="reasoningEffort = $event"
-        @update:search="search = $event" @update:draft="draft = $event" @send="send" />
+        @update:search="search = $event" @update:draft="draft = $event" @send="send" @stop="stopGeneration" />
     </main>
 
     <div v-if="providerModal" class="modal-mask" @click.self="providerModal = false">
@@ -138,6 +138,7 @@ export default {
   computed: {
     api() { return new Api(this.server, this.token); },
     sending() { return !!(this.activeId && this.streams[this.activeId]); },
+    streamPhase() { return (this.activeId && this.streams[this.activeId] && this.streams[this.activeId].phase) || ''; },
     providerOptions() { return this.providers.map((p) => ({ value: p.id, label: p.name })); },
     modelOptions() {
       const provider = this.providers.find((p) => p.id === this.providerId);
@@ -284,13 +285,38 @@ export default {
       if (!retry) conversation.messages.push({ id: uuid(), role: 'user', content: text, images: [], createdAt: now, status: 'COMPLETE', error: null });
       const assistant = { id: uuid(), role: 'assistant', content: '', reasoning: '', model: this.model, toolCalls: [], images: [], createdAt: now + 1, status: 'COMPLETE', error: null, streaming: true };
       conversation.messages.push(assistant);
-      this.$set(this.streams, conversation.id, { assistantId: assistant.id });
+      const controller = new AbortController();
+      this.$set(this.streams, conversation.id, { assistantId: assistant.id, phase: 'waiting', controller, cancelled: false });
+      const stream = this.streams[conversation.id];
       try {
-        if (this.level >= 2 && this.agentAvailable) await this.streamDsh(conversation, assistant, text);
-        else await this.streamRelay(conversation, assistant);
+        if (this.level >= 2 && this.agentAvailable) await this.streamDsh(conversation, assistant, text, stream);
+        else await this.streamRelay(conversation, assistant, stream);
         await this.persist(conversation);
-      } catch (e) { assistant.error = e.message; assistant.status = 'ERROR'; }
-      finally { assistant.streaming = false; this.$delete(this.streams, conversation.id); }
+      } catch (e) {
+        if (e.name === 'AbortError' || stream.cancelled) {
+          assistant.status = 'CANCELLED';
+        } else {
+          assistant.error = e.message;
+          assistant.status = 'ERROR';
+        }
+      } finally {
+        assistant.streaming = false;
+        if (this.streams[conversation.id] === stream) this.$delete(this.streams, conversation.id);
+      }
+    },
+    stopGeneration() {
+      const id = this.activeId;
+      const stream = id && this.streams[id];
+      if (!stream) return;
+      stream.cancelled = true;
+      try { stream.controller?.abort(); } catch (e) { /* ignore */ }
+      if (stream.jobId) {
+        this.api.request('/v1/relay/jobs/' + encodeURIComponent(stream.jobId) + '/cancel', { method: 'POST' }).catch(() => {});
+      }
+      const conversation = this.active;
+      const assistant = conversation && conversation.messages.find((m) => m.id === stream.assistantId);
+      if (assistant) { assistant.streaming = false; assistant.status = 'CANCELLED'; }
+      this.$delete(this.streams, id);
     },
     async responseError(res, label) {
       const raw = await res.text();
@@ -304,11 +330,12 @@ export default {
       error.detail = raw.slice(0, 4000);
       return error;
     },
-    async streamRelay(conversation, assistant) {
+    async streamRelay(conversation, assistant, stream) {
       const settings = conversation.settings || {};
       const history = conversation.messages.filter((m) => m !== assistant && m.content).map((m) => ({ id: m.id, role: m.role, content: m.content, images: [], createdAt: m.createdAt, status: 'COMPLETE', error: null }));
       const job = await this.api.request('/v1/relay/jobs', { method: 'POST', body: { providerId: settings.providerId || this.providerId, conversationId: conversation.id, model: settings.model || this.model, reasoningEffort: settings.reasoningEffort || this.reasoningEffort, search: settings.search !== false, messages: history } });
-      const res = await fetch(this.api.base() + '/v1/relay/jobs/' + encodeURIComponent(job.id) + '/events', { headers: { Authorization: 'Bearer ' + this.token } });
+      stream.jobId = job.id;
+      const res = await fetch(this.api.base() + '/v1/relay/jobs/' + encodeURIComponent(job.id) + '/events', { headers: { Authorization: 'Bearer ' + this.token }, signal: stream.controller.signal });
       if (!res.ok) throw await this.responseError(res, 'relay');
       const reader = res.body.getReader(); const decoder = new TextDecoder(); let buffer = '';
       while (true) {
@@ -321,12 +348,12 @@ export default {
           if (!data) continue;
           const event = JSON.parse(data);
           if (event.type === 'snapshot') {
-            if (event.text) assistant.content = event.text;
+            if (event.text) { assistant.content = event.text; stream.phase = 'streaming'; }
             if (event.reasoning) assistant.reasoning = event.reasoning;
             if (event.error) throw new Error(String(event.error).slice(0, 4000));
           }
-          if (event.type === 'delta') assistant.content += event.text || '';
-          if (event.type === 'reasoning') assistant.reasoning += event.text || '';
+          if (event.type === 'delta') { assistant.content += event.text || ''; stream.phase = 'streaming'; }
+          if (event.type === 'reasoning') { assistant.reasoning += event.text || ''; stream.phase = 'streaming'; }
           if (event.type === 'error') throw new Error((event.error || 'relay failed') + (event.status ? '（' + event.status + '）' : ''));
           if (event.type === 'status' && (event.status === 'failed' || event.status === 'cancelled')) {
             throw new Error(event.error || (event.status === 'cancelled' ? '生成已取消' : '生成失败'));
@@ -336,9 +363,9 @@ export default {
       }
       if (!assistant.content) throw new Error('连接已中断，未收到模型输出');
     },
-    async streamDsh(conversation, assistant, text) {
+    async streamDsh(conversation, assistant, text, stream) {
       const settings = conversation.settings || {};
-      const res = await fetch(this.api.base() + '/v1/agent/run', { method: 'POST', headers: { Authorization: 'Bearer ' + this.token, 'Content-Type': 'application/json' }, body: JSON.stringify({ providerId: settings.providerId || this.providerId, model: settings.model || this.model, reasoningEffort: settings.reasoningEffort || this.reasoningEffort, conversationId: conversation.id, text }) });
+      const res = await fetch(this.api.base() + '/v1/agent/run', { method: 'POST', headers: { Authorization: 'Bearer ' + this.token, 'Content-Type': 'application/json' }, signal: stream.controller.signal, body: JSON.stringify({ providerId: settings.providerId || this.providerId, model: settings.model || this.model, reasoningEffort: settings.reasoningEffort || this.reasoningEffort, conversationId: conversation.id, text }) });
       if (!res.ok) throw await this.responseError(res, 'DSH');
       const reader = res.body.getReader(); const decoder = new TextDecoder(); let buffer = '';
       while (true) {
@@ -352,8 +379,8 @@ export default {
           if (!data) continue;
           const event = JSON.parse(data);
           if (name === 'frame' && event.type === 'chunk' && event.chunk) {
-            if (event.chunk.type === 'text-delta') assistant.content += event.chunk.text || '';
-            if (event.chunk.type === 'reasoning-delta') assistant.reasoning += event.chunk.text || '';
+            if (event.chunk.type === 'text-delta') { assistant.content += event.chunk.text || ''; stream.phase = 'streaming'; }
+            if (event.chunk.type === 'reasoning-delta') { assistant.reasoning += event.chunk.text || ''; stream.phase = 'streaming'; }
           }
           if (name === 'event' && event.type === 'tool/call') (assistant.toolCalls = assistant.toolCalls || []).push({ callId: String(event.data?.callId || ''), name: String(event.data?.name || 'tool'), status: 'running' });
           if (name === 'done') return;

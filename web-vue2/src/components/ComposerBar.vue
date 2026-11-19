@@ -9,8 +9,8 @@
           <UiDropdown :value="reasoningEffort" :options="reasoningOptions" placeholder="思考" :disabled="sending || level < 2" :open="openDropdown === 'reasoning'" @toggle="toggleDropdown('reasoning')" @input="$emit('update:reasoningEffort', $event)" @select="openDropdown = ''" />
           <button class="chip" :class="{ on: search }" :disabled="sending || level < 2" @click="$emit('update:search', !search)">联网</button>
         </div>
-        <button class="send-btn" :disabled="sending || !draft.trim() || !providerId" @click="$emit('send')" :title="sending ? '生成中' : '发送'">
-          <span v-if="!sending">↑</span><span v-else class="spinner"></span>
+        <button class="send-btn" :class="{ stop: sending }" :disabled="!sending && (!draft.trim() || !providerId)" @click="sending ? $emit('stop') : $emit('send')" :title="sending ? '停止生成' : '发送'">
+          <span v-if="!sending">↑</span><span v-else class="stop-square"></span>
         </button>
       </div>
     </div>
