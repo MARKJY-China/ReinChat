@@ -19,7 +19,7 @@
       <div class="sidebar-foot">
         <div class="account-card">
           <div class="account-top"><span class="avatar">{{ user.slice(0, 1).toUpperCase() }}</span><span class="account-name">{{ user }}<small>LV{{ level }}</small></span><button class="link" @click="logout">退出</button></div>
-          <div class="account-links"><a class="link small" href="/admin">管理台</a></div>
+          <div class="account-links"><button class="link small" @click="openProviderManager">服务商管理</button><a class="link small" href="/admin">管理台</a></div>
         </div>
       </div>
     </aside>
@@ -43,6 +43,43 @@
         @update:providerId="setProvider" @update:model="model = $event" @update:reasoningEffort="reasoningEffort = $event"
         @update:search="search = $event" @update:draft="draft = $event" @send="send" />
     </main>
+    <div v-if="providerModal" class="modal-mask" @click.self="providerModal = false">
+      <div class="modal-card">
+        <div class="modal-head">
+          <div><h2>服务商</h2><p class="muted">配置用于服务端 Agent 的模型服务</p></div>
+          <button class="icon-btn" @click="providerModal = false">×</button>
+        </div>
+        <template v-if="!providerDraft">
+          <div class="provider-list">
+            <div v-for="p in providerRecords" :key="p.id" class="provider-row">
+              <div class="provider-avatar">{{ p.name.slice(0, 1).toUpperCase() }}</div>
+              <div class="provider-info"><strong>{{ p.name }}</strong><span>{{ p.baseUrl }}</span><small>{{ p.model }} · {{ p.protocol }}</small></div>
+              <button class="ghost small" @click="editProvider(p)">编辑</button>
+              <button class="ghost small danger-text" @click="deleteProvider(p)">删除</button>
+            </div>
+            <p v-if="!providerRecords.length" class="empty-small">暂无服务商</p>
+          </div>
+          <div class="modal-actions"><button class="primary" @click="newProvider">＋ 添加服务商</button></div>
+        </template>
+        <template v-else>
+          <div class="form-grid">
+            <label>名称<input v-model.trim="providerDraft.name" placeholder="DeepSeek"></label>
+            <label>协议
+              <div class="segmented">
+                <button :class="{ active: providerDraft.protocol === 'CHAT_COMPLETIONS' }" @click="providerDraft.protocol = 'CHAT_COMPLETIONS'">Chat Completions</button>
+                <button :class="{ active: providerDraft.protocol === 'RESPONSES' }" @click="providerDraft.protocol = 'RESPONSES'">Responses</button>
+              </div>
+            </label>
+            <label>Base URL<input v-model.trim="providerDraft.baseUrl" placeholder="https://api.deepseek.com/v1"></label>
+            <label>API Key<input v-model.trim="providerDraft.apiKey" type="password"></label>
+            <label class="wide">模型（逗号分隔）<input v-model.trim="providerDraft.model" placeholder="deepseek-chat,deepseek-reasoner"></label>
+            <label class="wide">系统提示词<textarea v-model="providerDraft.systemPrompt" rows="3"></textarea></label>
+          </div>
+          <p class="error" v-if="providerError">{{ providerError }}</p>
+          <div class="modal-actions"><button class="ghost" @click="providerDraft = null">返回</button><button class="primary" :disabled="providerBusy" @click="saveProvider">{{ providerBusy ? '保存中…' : '保存' }}</button></div>
+        </template>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -67,8 +104,9 @@ export default {
       server: localStorage.getItem(SERVER) || window.location.origin,
       authError: '', busy: false,
       conversations: [], active: null, activeId: '',
-      providers: [], providerId: '', model: '', reasoningEffort: 'high', search: true,
+      providers: [], providerRecords: [], providerId: '', model: '', reasoningEffort: 'high', search: true,
       draft: '', sending: false, level: 1, agentAvailable: false,
+      providerModal: false, providerDraft: null, providerBusy: false, providerError: '',
     };
   },
   computed: {
@@ -108,6 +146,8 @@ export default {
         this.conversations = list.conversations || [];
         this.level = account.user.level || 1; this.agentAvailable = !!account.agentAvailable;
         this.providers = providers.providers || [];
+        const full = await this.api.providers();
+        this.providerRecords = full.providers || [];
         if (!this.providerId && this.providers.length) this.providerId = this.providers[0].id;
         if (this.activeId) await this.openConversation(this.activeId);
       } catch (e) { this.authError = e.message; }
@@ -115,6 +155,33 @@ export default {
     async openConversation(id) {
       this.activeId = id;
       try { this.active = await this.api.conversation(id); } catch (e) { this.authError = e.message; }
+    },
+    setProvider(id) {
+      this.providerId = id;
+      const provider = this.providers.find((p) => p.id === id);
+      const first = ((provider && provider.model) || '').split(',')[0].trim();
+      this.model = first;
+    },
+    openProviderManager() { this.providerModal = true; this.providerDraft = null; this.providerError = ''; this.refresh(); },
+    newProvider() {
+      this.providerDraft = { id: uuid(), name: '', protocol: 'CHAT_COMPLETIONS', baseUrl: '', apiKey: '', model: '', systemPrompt: '' };
+      this.providerError = '';
+    },
+    editProvider(p) { this.providerDraft = { ...p }; this.providerError = ''; },
+    async saveProvider() {
+      if (!this.providerDraft || this.providerBusy) return;
+      const p = this.providerDraft;
+      if (!p.name.trim() || !p.baseUrl.trim() || !p.model.trim()) { this.providerError = '名称、Base URL、模型不能为空'; return; }
+      this.providerBusy = true; this.providerError = '';
+      try {
+        await this.api.putProvider({ id: p.id, name: p.name.trim(), protocol: p.protocol, baseUrl: p.baseUrl.trim(), apiKey: p.apiKey || '', model: p.model.trim(), systemPrompt: p.systemPrompt || '', temperature: null, maxTokens: null });
+        this.providerDraft = null;
+        await this.refresh();
+      } catch (e) { this.providerError = e.message; } finally { this.providerBusy = false; }
+    },
+    async deleteProvider(p) {
+      if (!window.confirm('删除服务商「' + p.name + '」？')) return;
+      try { await this.api.deleteProvider(p.id); if (this.providerId === p.id) this.providerId = ''; await this.refresh(); } catch (e) { this.providerError = e.message; }
     },
     newConversation() {
       const now = Date.now();
