@@ -1,5 +1,7 @@
 package com.reinchat.app.ui.screens
 
+import android.content.ClipData
+import android.content.ClipboardManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -89,6 +91,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.semantics.contentDescription
@@ -116,6 +119,7 @@ import com.reinchat.app.ui.theme.LiquidEase
 import com.reinchat.app.ui.theme.LocalReinThemeControl
 import com.reinchat.app.ui.theme.ReinColors
 import com.reinchat.app.vm.ChatUiState
+import com.reinchat.app.vm.StreamPhase
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.isActive
@@ -133,6 +137,11 @@ fun ChatScreen(
     onDraftChange: (String) -> Unit,
     onAddImages: (List<android.net.Uri>) -> Unit,
     onRemoveAttachment: (String) -> Unit,
+    onAttachPdf: (android.net.Uri) -> Unit,
+    onRemovePdf: () -> Unit,
+    onPasteClipboard: (ClipData?) -> Boolean,
+    onPasteUris: (List<android.net.Uri>) -> Boolean,
+    onClearPdfError: () -> Unit,
     onSend: () -> Unit,
     onStop: () -> Unit,
     onCancelEdit: () -> Unit,
@@ -180,6 +189,39 @@ fun ChatScreen(
     val imagePicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickMultipleVisualMedia(maxItems = 4)
     ) { uris -> if (uris.isNotEmpty()) onAddImages(uris) }
+
+    val context = LocalContext.current
+    val platformClipboard = remember(context) {
+        context.getSystemService(ClipboardManager::class.java)
+    }
+    val pdfPicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri -> uri?.let(onAttachPdf) }
+
+    // Compose exposes no file-URI paste callback, so read the platform clip
+    // directly: first the item URIs, then any content:// or file:// URLs that
+    // were copied as plain text.
+    fun pasteAttachments() {
+        val clip = platformClipboard?.primaryClip
+        if (clip != null && onPasteClipboard(clip)) return
+        val text = clip
+            ?.takeIf { it.itemCount > 0 }
+            ?.getItemAt(0)
+            ?.coerceToText(context)
+            ?.toString()
+            .orEmpty()
+        val uris = Regex("(?:content|file)://[^\\s\"']+")
+            .findAll(text)
+            .map { android.net.Uri.parse(it.value) }
+            .toList()
+        if (uris.isNotEmpty() && onPasteUris(uris)) return
+        scope.launch {
+            snackbarHostState.showSnackbar(
+                message = "剪贴板中没有可添加的图片或 PDF",
+                duration = SnackbarDuration.Short,
+            )
+        }
+    }
 
     LaunchedEffect(state.activeConversationId) {
         followLatest = true
@@ -288,6 +330,11 @@ fun ChatScreen(
                                 message = message,
                                 animateIn = message.createdAt >= screenOpenedAt - 100,
                                 isStreaming = message.id == streamingId,
+                                streamPhase = if (message.id == streamingId) {
+                                    state.streamPhase
+                                } else {
+                                    StreamPhase.IDLE
+                                },
                                 canRewind = !state.isStreaming && message.id != messages.lastOrNull()?.id,
                                 actionsOpen = openActionsId == message.id,
                                 onToggleActions = {
@@ -402,22 +449,31 @@ fun ChatScreen(
             ) {
                 Composer(
                     draft = state.draft,
-                    attachments = state.attachments,
+                    pendingAttachments = state.pendingAttachments,
                     isStreaming = state.isStreaming,
                     importingImage = state.importingImage,
+                    pdfBusy = state.pdfBusy,
+                    pdfError = state.pdfError,
                     editing = state.editingMessageId != null,
                     providerLabel = provider?.let { it.activeModel.ifBlank { it.name } },
                     webSearch = state.webSearch,
                     searchAvailable = (state.account?.level ?: 1) >= 2,
                     relayMode = (state.account?.level ?: 1) >= 2,
                     onToggleWebSearch = onToggleWebSearch,
-                    canSend = state.canSend && !state.importingImage,
+                    canSend = state.canSend && !state.importingImage && !state.pdfBusy,
                     onDraftChange = onDraftChange,
                     onAddImage = {
                         imagePicker.launch(
                             PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
                         )
                     },
+                    onAttachPdf = {
+                        onClearPdfError()
+                        pdfPicker.launch(arrayOf("application/pdf"))
+                    },
+                    onPaste = { pasteAttachments() },
+                    onRemovePdf = onRemovePdf,
+                    onClearPdfError = onClearPdfError,
                     onRemoveAttachment = onRemoveAttachment,
                     onSend = {
                         followLatest = true

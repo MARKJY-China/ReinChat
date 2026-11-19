@@ -2,7 +2,11 @@ package com.reinchat.app.ui.components
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
@@ -58,6 +62,7 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -66,10 +71,13 @@ import coil.compose.AsyncImage
 import com.reinchat.app.data.ChatImage
 import com.reinchat.app.data.ChatMessage
 import com.reinchat.app.data.MessageRole
+import com.reinchat.app.data.MessageSegment
 import com.reinchat.app.data.MessageStatus
 import com.reinchat.app.ui.theme.LiquidEase
+import com.reinchat.app.ui.theme.LiquidEaseInOut
 import com.reinchat.app.ui.theme.LiquidEaseOutSoft
 import com.reinchat.app.ui.theme.ReinColors
+import com.reinchat.app.vm.StreamPhase
 
 /**
  * A single conversational turn, styled after the web client: the user writes in a
@@ -81,6 +89,7 @@ fun MessageItem(
     message: ChatMessage,
     animateIn: Boolean,
     isStreaming: Boolean,
+    streamPhase: StreamPhase,
     canRewind: Boolean,
     actionsOpen: Boolean,
     onToggleActions: () -> Unit,
@@ -126,6 +135,7 @@ fun MessageItem(
             AssistantMessage(
                 message = message,
                 isStreaming = isStreaming,
+                streamPhase = streamPhase,
                 canRewind = canRewind,
                 actionsOpen = actionsOpen,
                 onToggleActions = onToggleActions,
@@ -162,6 +172,7 @@ private fun UserMessage(
 ) {
     BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
         val maxBubble = minOf(maxWidth * 0.86f, 520.dp)
+        val hasMedia = message.images.isNotEmpty() || message.hasPdf
         Column(
             modifier = Modifier.fillMaxWidth(),
             horizontalAlignment = Alignment.End,
@@ -184,8 +195,19 @@ private fun UserMessage(
                     .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {
                         if (!isStreaming) onToggleActions()
                     }
-                    .padding(if (message.images.isNotEmpty()) 4.dp else 0.dp),
+                    .padding(if (hasMedia) 5.dp else 0.dp),
             ) {
+                if (message.hasPdf) {
+                    PdfMessageChip(
+                        name = message.pdfName.ifBlank { "文档.pdf" },
+                        modifier = Modifier.padding(
+                            start = if (message.images.isNotEmpty()) 5.dp else 7.dp,
+                            end = 5.dp,
+                            top = 2.dp,
+                            bottom = if (message.images.isNotEmpty()) 3.dp else 0.dp,
+                        ),
+                    )
+                }
                 if (message.images.isNotEmpty()) {
                     UserImageGrid(
                         images = message.images,
@@ -197,8 +219,8 @@ private fun UserMessage(
                     Text(
                         text = message.content,
                         modifier = Modifier.padding(
-                            horizontal = if (message.images.isNotEmpty()) 12.dp else 15.dp,
-                            vertical = if (message.images.isNotEmpty()) 10.dp else 11.dp,
+                            horizontal = if (hasMedia) 12.dp else 15.dp,
+                            vertical = if (hasMedia) 10.dp else 11.dp,
                         ),
                         style = MaterialTheme.typography.bodyLarge,
                         color = ReinColors.TextPrimary,
@@ -279,6 +301,7 @@ private fun UserMessage(
 private fun AssistantMessage(
     message: ChatMessage,
     isStreaming: Boolean,
+    streamPhase: StreamPhase,
     canRewind: Boolean,
     actionsOpen: Boolean,
     onToggleActions: () -> Unit,
@@ -288,6 +311,7 @@ private fun AssistantMessage(
     onRewind: (ChatMessage) -> Unit,
 ) {
     val hasContent = message.content.isNotBlank()
+    val segments = message.segments
 
     Column(modifier = Modifier.fillMaxWidth()) {
         Row(
@@ -314,17 +338,13 @@ private fun AssistantMessage(
                 style = MaterialTheme.typography.labelMedium.copy(fontSize = 9.5.sp),
                 color = ReinColors.TextTertiary,
             )
-            if (message.status == MessageStatus.STOPPED && hasContent) {
+            if (message.status.isCancelled && hasContent) {
                 Spacer(Modifier.width(7.dp))
                 Text(
                     text = "已停止",
                     style = MaterialTheme.typography.labelMedium.copy(fontSize = 9.5.sp),
                     color = ReinColors.TextTertiary,
                 )
-            }
-            if (isStreaming) {
-                Spacer(Modifier.width(8.dp))
-                ThinkingDots()
             }
             Spacer(Modifier.weight(1f))
             if (hasContent && !isStreaming) {
@@ -337,7 +357,15 @@ private fun AssistantMessage(
             )
         }
 
-        if (message.reasoning.isNotBlank()) {
+        if (segments.isNotEmpty()) {
+            SegmentTimeline(
+                messageId = message.id,
+                segments = segments,
+                isStreaming = isStreaming,
+            )
+            if (hasContent || isStreaming) Spacer(Modifier.height(10.dp))
+        } else if (message.reasoning.isNotBlank()) {
+            // Old conversations only stored the concatenated reasoning text.
             ThinkingBlock(
                 message = message,
                 hasContent = hasContent,
@@ -362,19 +390,8 @@ private fun AssistantMessage(
                 }
             }
 
-            isStreaming -> {
-                if (message.reasoning.isBlank()) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        ThinkingDots()
-                        Spacer(Modifier.width(9.dp))
-                        Text(
-                            text = "正在思考",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = ReinColors.TextTertiary,
-                        )
-                    }
-                }
-            }
+            // The phase line below already tells the user what is happening.
+            isStreaming -> Unit
 
             message.status == MessageStatus.ERROR -> {
                 ErrorNotice(message = message.error ?: "生成失败，请稍后重试")
@@ -387,6 +404,10 @@ private fun AssistantMessage(
                     color = ReinColors.TextTertiary,
                 )
             }
+        }
+
+        if (isStreaming) {
+            StreamPhaseLine(phase = streamPhase)
         }
 
         AnimatedVisibility(
@@ -436,6 +457,361 @@ private fun AssistantMessage(
     }
 }
 
+/**
+ * "请求服务端中" while waiting for the first token, "AI 正在输出" once text is
+ * arriving. Dots only animate in the waiting phase, when there is nothing else
+ * to read yet.
+ */
+@Composable
+private fun StreamPhaseLine(phase: StreamPhase) {
+    if (phase == StreamPhase.IDLE) return
+    Row(
+        modifier = Modifier.padding(top = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (phase == StreamPhase.WAITING) {
+            ThinkingDots()
+            Spacer(Modifier.width(9.dp))
+        }
+        Text(
+            text = when (phase) {
+                StreamPhase.STREAMING -> "AI 正在输出"
+                StreamPhase.WAITING -> "请求服务端中"
+                StreamPhase.IDLE -> ""
+            },
+            style = MaterialTheme.typography.labelMedium.copy(fontSize = 10.5.sp),
+            color = ReinColors.TextTertiary,
+        )
+    }
+}
+
+/** Chronological reasoning / tool timeline rebuilt from [ChatMessage.segments]. */
+@Composable
+private fun SegmentTimeline(
+    messageId: String,
+    segments: List<MessageSegment>,
+    isStreaming: Boolean,
+) {
+    val firstReasoningIndex = segments.indexOfFirst { it.type == MessageSegment.TYPE_REASONING }
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        segments.forEachIndexed { index, segment ->
+            when (segment.type) {
+                MessageSegment.TYPE_REASONING -> ReasoningSegment(
+                    messageId = messageId,
+                    index = index,
+                    segment = segment,
+                    isStreaming = isStreaming,
+                    first = index == firstReasoningIndex,
+                )
+
+                MessageSegment.TYPE_TOOL -> ToolSegment(
+                    messageId = messageId,
+                    index = index,
+                    segment = segment,
+                )
+
+                else -> Unit
+            }
+        }
+    }
+}
+
+@Composable
+private fun ReasoningSegment(
+    messageId: String,
+    index: Int,
+    segment: MessageSegment,
+    isStreaming: Boolean,
+    first: Boolean,
+) {
+    var userToggled by remember(messageId, index) { mutableStateOf(false) }
+    var expanded by remember(messageId, index) { mutableStateOf(isStreaming) }
+    val scrollState = rememberScrollState()
+    val chevronRotation by animateFloatAsState(
+        targetValue = if (expanded) 90f else 0f,
+        animationSpec = tween(200, easing = LiquidEaseOutSoft),
+        label = "reasoningChevron",
+    )
+
+    // Auto-expand while this message streams and auto-collapse once it is done.
+    LaunchedEffect(isStreaming) {
+        if (!userToggled) expanded = isStreaming
+    }
+    LaunchedEffect(segment.text, expanded) {
+        if (expanded && isStreaming) scrollState.scrollTo(scrollState.maxValue)
+    }
+
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(6.dp))
+                .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {
+                    userToggled = true
+                    expanded = !expanded
+                }
+                .padding(vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            SegmentChevron(rotation = chevronRotation)
+            Spacer(Modifier.width(6.dp))
+            Text(
+                text = if (first) "思考过程" else "继续思考",
+                style = MaterialTheme.typography.labelLarge.copy(fontSize = 12.sp),
+                color = ReinColors.TextSecondary,
+            )
+            Spacer(Modifier.width(7.dp))
+            Text(
+                text = "${segment.text.length} 字",
+                style = MaterialTheme.typography.labelMedium.copy(fontSize = 9.5.sp),
+                color = ReinColors.TextTertiary.copy(alpha = 0.8f),
+            )
+            Spacer(Modifier.weight(1f))
+            Text(
+                text = if (isStreaming) "思考中…" else "已思考",
+                style = MaterialTheme.typography.labelMedium.copy(fontSize = 9.5.sp),
+                color = if (isStreaming) ReinColors.Mint.copy(alpha = 0.8f) else ReinColors.TextTertiary,
+            )
+        }
+
+        AnimatedVisibility(
+            visible = expanded,
+            enter = expandVertically(
+                animationSpec = tween(200, easing = LiquidEaseOutSoft),
+                expandFrom = Alignment.Top,
+            ) + fadeIn(tween(140)),
+            exit = shrinkVertically(
+                animationSpec = tween(150, easing = LiquidEaseOutSoft),
+                shrinkTowards = Alignment.Top,
+            ) + fadeOut(tween(90)),
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 5.dp, top = 3.dp, bottom = 4.dp)
+                    .heightIn(max = 280.dp)
+                    .drawBehind {
+                        drawLine(
+                            color = ReinColors.Hairline,
+                            start = Offset(0f, 0f),
+                            end = Offset(0f, size.height),
+                            strokeWidth = 1.dp.toPx(),
+                        )
+                    }
+                    .verticalScroll(scrollState)
+                    .padding(start = 13.dp, top = 2.dp, bottom = 2.dp, end = 4.dp),
+            ) {
+                Text(
+                    text = segment.text,
+                    style = MaterialTheme.typography.bodyMedium.copy(
+                        fontSize = 12.5.sp,
+                        lineHeight = 21.sp,
+                    ),
+                    color = ReinColors.TextSecondary,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ToolSegment(
+    messageId: String,
+    index: Int,
+    segment: MessageSegment,
+) {
+    val hasDetail = segment.detail.isNotBlank()
+    var expanded by remember(messageId, index) { mutableStateOf(false) }
+    val running = segment.status == MessageSegment.TOOL_STATUS_RUNNING
+    val failed = segment.status == MessageSegment.TOOL_STATUS_FAILED
+    val stateColor = when {
+        failed -> ReinColors.Danger
+        running -> ReinColors.Mint
+        else -> ReinColors.TextTertiary
+    }
+    val shape = RoundedCornerShape(8.dp)
+    val detailScroll = rememberScrollState()
+    val chevronRotation by animateFloatAsState(
+        targetValue = if (expanded) 90f else 0f,
+        animationSpec = tween(200, easing = LiquidEaseOutSoft),
+        label = "toolChevron",
+    )
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(shape)
+            .background(ReinColors.DeepElevated.copy(alpha = 0.55f))
+            .border(1.dp, ReinColors.Hairline, shape)
+            .then(
+                if (hasDetail) {
+                    Modifier.clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                    ) { expanded = !expanded }
+                } else {
+                    Modifier
+                }
+            )
+            .padding(horizontal = 10.dp, vertical = 8.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            ToolStatusDot(running = running, failed = failed)
+            Spacer(Modifier.width(8.dp))
+            Text(
+                text = toolSegmentLabel(segment),
+                style = MaterialTheme.typography.labelLarge.copy(fontSize = 12.sp),
+                color = ReinColors.TextSecondary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            Spacer(Modifier.width(7.dp))
+            Text(
+                text = when {
+                    failed -> "失败"
+                    running -> "进行中"
+                    else -> "完成"
+                },
+                style = MaterialTheme.typography.labelMedium.copy(fontSize = 9.5.sp),
+                color = stateColor,
+            )
+            if (hasDetail) {
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    text = "结果",
+                    style = MaterialTheme.typography.labelMedium.copy(fontSize = 9.5.sp),
+                    color = ReinColors.TextTertiary,
+                )
+                Spacer(Modifier.width(3.dp))
+                SegmentChevron(rotation = chevronRotation)
+            }
+        }
+
+        if (hasDetail) {
+            AnimatedVisibility(
+                visible = expanded,
+                enter = expandVertically(
+                    animationSpec = tween(200, easing = LiquidEaseOutSoft),
+                    expandFrom = Alignment.Top,
+                ) + fadeIn(tween(140)),
+                exit = shrinkVertically(
+                    animationSpec = tween(150, easing = LiquidEaseOutSoft),
+                    shrinkTowards = Alignment.Top,
+                ) + fadeOut(tween(90)),
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 8.dp)
+                        .heightIn(max = 220.dp)
+                        .verticalScroll(detailScroll),
+                ) {
+                    Text(
+                        text = segment.detail,
+                        style = MaterialTheme.typography.bodyMedium.copy(
+                            fontSize = 11.5.sp,
+                            lineHeight = 18.sp,
+                            fontFamily = FontFamily.Monospace,
+                        ),
+                        color = ReinColors.TextTertiary,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ToolStatusDot(running: Boolean, failed: Boolean) {
+    val color = when {
+        failed -> ReinColors.Danger
+        running -> ReinColors.Mint
+        else -> ReinColors.TextTertiary.copy(alpha = 0.6f)
+    }
+    val alpha = if (running) {
+        val transition = rememberInfiniteTransition(label = "toolPulse")
+        val pulse by transition.animateFloat(
+            initialValue = 0.35f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(720, easing = LiquidEaseInOut),
+                repeatMode = RepeatMode.Reverse,
+            ),
+            label = "toolPulseAlpha",
+        )
+        pulse
+    } else {
+        1f
+    }
+    Box(
+        modifier = Modifier
+            .size(6.dp)
+            .clip(CircleShape)
+            .background(color.copy(alpha = alpha))
+    )
+}
+
+@Composable
+private fun SegmentChevron(rotation: Float, modifier: Modifier = Modifier) {
+    Canvas(
+        modifier = modifier
+            .size(11.dp)
+            .graphicsLayer { rotationZ = rotation }
+    ) {
+        val stroke = 1.5.dp.toPx()
+        val color = ReinColors.TextTertiary
+        drawLine(
+            color = color,
+            start = Offset(size.width * 0.3f, size.height * 0.16f),
+            end = Offset(size.width * 0.68f, size.height * 0.5f),
+            strokeWidth = stroke,
+            cap = StrokeCap.Round,
+        )
+        drawLine(
+            color = color,
+            start = Offset(size.width * 0.68f, size.height * 0.5f),
+            end = Offset(size.width * 0.3f, size.height * 0.84f),
+            strokeWidth = stroke,
+            cap = StrokeCap.Round,
+        )
+    }
+}
+
+@Composable
+private fun PdfMessageChip(name: String, modifier: Modifier = Modifier) {
+    val shape = RoundedCornerShape(8.dp)
+    Row(
+        modifier = modifier
+            .clip(shape)
+            .background(ReinColors.Surface)
+            .border(1.dp, ReinColors.Hairline, shape)
+            .padding(horizontal = 8.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        PdfBadge(size = 22.dp)
+        Spacer(Modifier.width(8.dp))
+        Column {
+            Text(
+                text = name,
+                style = MaterialTheme.typography.labelMedium.copy(fontSize = 11.5.sp),
+                color = ReinColors.TextPrimary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.widthIn(max = 180.dp),
+            )
+            Text(
+                text = "附件文档",
+                style = MaterialTheme.typography.labelMedium.copy(fontSize = 9.sp),
+                color = ReinColors.TextTertiary,
+            )
+        }
+    }
+}
+
 @Composable
 private fun ThinkingBlock(
     message: ChatMessage,
@@ -473,28 +849,7 @@ private fun ThinkingBlock(
                 .padding(vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Canvas(
-                modifier = Modifier
-                    .size(11.dp)
-                    .graphicsLayer { rotationZ = chevronRotation }
-            ) {
-                val stroke = 1.5.dp.toPx()
-                val color = ReinColors.TextTertiary
-                drawLine(
-                    color = color,
-                    start = Offset(size.width * 0.3f, size.height * 0.16f),
-                    end = Offset(size.width * 0.68f, size.height * 0.5f),
-                    strokeWidth = stroke,
-                    cap = StrokeCap.Round,
-                )
-                drawLine(
-                    color = color,
-                    start = Offset(size.width * 0.68f, size.height * 0.5f),
-                    end = Offset(size.width * 0.3f, size.height * 0.84f),
-                    strokeWidth = stroke,
-                    cap = StrokeCap.Round,
-                )
-            }
+            SegmentChevron(rotation = chevronRotation)
             Spacer(Modifier.width(6.dp))
             Text(
                 text = "思考过程",

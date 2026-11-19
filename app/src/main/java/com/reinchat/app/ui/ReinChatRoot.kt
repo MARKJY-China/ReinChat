@@ -34,7 +34,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import androidx.core.view.WindowCompat
@@ -44,6 +46,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.reinchat.app.BuildConfig
+import com.reinchat.app.data.ThemeMode
 import com.reinchat.app.ui.components.AuroraBackground
 import com.reinchat.app.ui.components.ReinSnackbarHost
 import com.reinchat.app.ui.components.UpdateDialog
@@ -58,37 +61,45 @@ import com.reinchat.app.ui.theme.ReinThemeControl
 import com.reinchat.app.update.UpdateDownloadState
 import com.reinchat.app.update.installDownloadedApk
 import com.reinchat.app.vm.ChatEvent
+import com.reinchat.app.vm.ChatUiState
 import com.reinchat.app.vm.ChatViewModel
 
 enum class RootMode { FUSED, CONTENT, CHROME }
 
 /**
- * Owns the small amount of UI state the theme toggle needs. No data-layer changes:
- * the default is still the system theme, and an explicit toggle is remembered only
- * for this process via [rememberSaveable].
+ * Applies the persisted [ThemeMode] and font scale from [ChatUiState] at the root,
+ * then hands the state down so screens never own visual preferences themselves.
  */
 @Composable
 fun ReinChatRoot(
     viewModel: ChatViewModel = viewModel(),
     mode: RootMode = RootMode.FUSED,
 ) {
+    val state by viewModel.state.collectAsStateWithLifecycle()
     val systemDark = isSystemInDarkTheme()
-    // 0 = follow the system, 1 = force dark, 2 = force light.
-    var themeChoice by rememberSaveable { mutableStateOf(0) }
-    val darkTheme = when (themeChoice) {
-        1 -> true
-        2 -> false
-        else -> systemDark
+    val darkTheme = when (state.themeMode) {
+        ThemeMode.DARK -> true
+        ThemeMode.LIGHT -> false
+        ThemeMode.SYSTEM -> systemDark
     }
+    val baseDensity = LocalDensity.current
+    val scaledDensity = Density(
+        density = baseDensity.density,
+        fontScale = baseDensity.fontScale * state.fontScale,
+    )
 
     ReinTheme(darkTheme = darkTheme) {
         CompositionLocalProvider(
+            LocalDensity provides scaledDensity,
             LocalReinThemeControl provides ReinThemeControl(
                 darkTheme = darkTheme,
-                onToggle = { themeChoice = if (darkTheme) 2 else 1 },
-            )
+                onToggle = {
+                    viewModel.setThemeMode(if (darkTheme) ThemeMode.LIGHT else ThemeMode.DARK)
+                },
+            ),
         ) {
             ReinChatRootContent(
+                state = state,
                 viewModel = viewModel,
                 mode = mode,
                 darkTheme = darkTheme,
@@ -99,11 +110,11 @@ fun ReinChatRoot(
 
 @Composable
 private fun ReinChatRootContent(
+    state: ChatUiState,
     viewModel: ChatViewModel,
     mode: RootMode,
     darkTheme: Boolean,
 ) {
-    val state by viewModel.state.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
     var drawerOpen by rememberSaveable { mutableStateOf(false) }
     var settingsOpen by rememberSaveable { mutableStateOf(false) }
@@ -174,6 +185,11 @@ private fun ReinChatRootContent(
             onDraftChange = viewModel::setDraft,
             onAddImages = viewModel::addImages,
             onRemoveAttachment = viewModel::removeAttachment,
+            onAttachPdf = viewModel::attachPdf,
+            onRemovePdf = viewModel::removePdfAttachment,
+            onPasteClipboard = viewModel::pasteFromClipboard,
+            onPasteUris = viewModel::handlePastedUris,
+            onClearPdfError = viewModel::clearPdfError,
             onSend = viewModel::send,
             onStop = viewModel::stopStreaming,
             onCancelEdit = viewModel::cancelEdit,
@@ -223,6 +239,8 @@ private fun ReinChatRootContent(
                     activeProviderId = state.settings.activeProviderId,
                     account = state.account,
                     cloudServerUrl = state.settings.cloudServerUrl,
+                    themeMode = state.themeMode,
+                    fontScale = state.fontScale,
                     cloudSyncing = state.cloudSyncing,
                     cloudError = state.cloudError,
                     authBusy = state.authBusy,
@@ -237,6 +255,8 @@ private fun ReinChatRootContent(
                     onRegister = viewModel::register,
                     onLogout = viewModel::logout,
                     onSyncCloud = viewModel::syncCloudNow,
+                    onThemeMode = viewModel::setThemeMode,
+                    onFontScale = viewModel::setFontScale,
                     onClearAuthError = viewModel::clearAuthError,
                 )
             }

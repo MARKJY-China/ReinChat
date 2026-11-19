@@ -36,9 +36,11 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.AddPhotoAlternate
 import androidx.compose.material.icons.rounded.ArrowUpward
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.ContentPaste
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material.icons.rounded.Language
+import androidx.compose.material.icons.rounded.PictureAsPdf
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -58,6 +60,7 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -70,7 +73,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
-import com.reinchat.app.data.ChatImage
+import com.reinchat.app.data.PendingAttachment
+import com.reinchat.app.data.PendingAttachmentKind
 import com.reinchat.app.ui.theme.LiquidEase
 import com.reinchat.app.ui.theme.LiquidEaseOutSoft
 import com.reinchat.app.ui.theme.ReinColors
@@ -82,9 +86,11 @@ import com.reinchat.app.ui.theme.ReinColors
 @Composable
 fun Composer(
     draft: String,
-    attachments: List<ChatImage>,
+    pendingAttachments: List<PendingAttachment>,
     isStreaming: Boolean,
     importingImage: Boolean,
+    pdfBusy: Boolean,
+    pdfError: String?,
     editing: Boolean,
     providerLabel: String?,
     webSearch: Boolean,
@@ -94,6 +100,10 @@ fun Composer(
     canSend: Boolean,
     onDraftChange: (String) -> Unit,
     onAddImage: () -> Unit,
+    onAttachPdf: () -> Unit,
+    onPaste: () -> Unit,
+    onRemovePdf: () -> Unit,
+    onClearPdfError: () -> Unit,
     onRemoveAttachment: (String) -> Unit,
     onSend: () -> Unit,
     onStop: () -> Unit,
@@ -110,6 +120,9 @@ fun Composer(
     )
     val composerShape = RoundedCornerShape(14.dp)
     val keyboard = LocalSoftwareKeyboardController.current
+    val imageAttachments = pendingAttachments.filter { it.kind == PendingAttachmentKind.IMAGE }
+    val pdfAttachment = pendingAttachments.firstOrNull { it.isPdf }
+    val hasAttachmentArea = pendingAttachments.isNotEmpty() || importingImage || pdfError != null
 
     LaunchedEffect(editing) {
         if (editing) {
@@ -168,7 +181,7 @@ fun Composer(
         }
 
         AnimatedVisibility(
-            visible = attachments.isNotEmpty() || importingImage,
+            visible = hasAttachmentArea,
             enter = fadeIn(tween(160)) + expandVertically(
                 animationSpec = tween(240, easing = LiquidEaseOutSoft),
                 expandFrom = Alignment.Bottom,
@@ -178,32 +191,84 @@ fun Composer(
                 shrinkTowards = Alignment.Bottom,
             ),
         ) {
-            Row(
+            Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(start = 3.dp, end = 3.dp, top = 4.dp, bottom = 6.dp),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                attachments.forEach { image ->
-                    AttachmentThumbnail(
-                        image = image,
-                        onRemove = { onRemoveAttachment(image.id) },
+                if (pdfBusy || pdfAttachment != null) {
+                    PdfAttachmentChip(
+                        name = pdfAttachment?.name,
+                        busy = pdfBusy,
+                        onRemove = onRemovePdf,
                     )
                 }
-                if (importingImage) {
-                    Box(
+                if (pdfError != null) {
+                    Row(
                         modifier = Modifier
-                            .size(52.dp)
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(ReinColors.DeepElevated)
-                            .border(1.dp, ReinColors.Hairline, RoundedCornerShape(8.dp)),
-                        contentAlignment = Alignment.Center,
+                            .fillMaxWidth()
+                            .padding(
+                                top = if (pdfBusy || pdfAttachment != null) 5.dp else 0.dp,
+                                start = 2.dp,
+                                end = 2.dp,
+                            ),
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(15.dp),
-                            color = ReinColors.Mint.copy(alpha = 0.8f),
-                            strokeWidth = 1.5.dp,
+                        Text(
+                            text = pdfError,
+                            style = MaterialTheme.typography.labelMedium.copy(
+                                fontSize = 10.5.sp,
+                                lineHeight = 15.sp,
+                            ),
+                            color = if (pdfBusy) ReinColors.TextTertiary
+                            else ReinColors.Danger.copy(alpha = 0.9f),
+                            modifier = Modifier.weight(1f),
                         )
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            text = "知道了",
+                            style = MaterialTheme.typography.labelMedium.copy(fontSize = 10.sp),
+                            color = ReinColors.TextTertiary,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(5.dp))
+                                .clickable(
+                                    interactionSource = remember { MutableInteractionSource() },
+                                    indication = null,
+                                    onClick = onClearPdfError,
+                                )
+                                .padding(horizontal = 5.dp, vertical = 3.dp),
+                        )
+                    }
+                }
+                if (imageAttachments.isNotEmpty() || importingImage) {
+                    Row(
+                        modifier = Modifier.padding(
+                            top = if (pdfBusy || pdfAttachment != null || pdfError != null) 6.dp else 0.dp,
+                        ),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        imageAttachments.forEach { attachment ->
+                            AttachmentThumbnail(
+                                attachment = attachment,
+                                onRemove = { onRemoveAttachment(attachment.id) },
+                            )
+                        }
+                        if (importingImage) {
+                            Box(
+                                modifier = Modifier
+                                    .size(52.dp)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(ReinColors.DeepElevated)
+                                    .border(1.dp, ReinColors.Hairline, RoundedCornerShape(8.dp)),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(15.dp),
+                                    color = ReinColors.Mint.copy(alpha = 0.8f),
+                                    strokeWidth = 1.5.dp,
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -213,21 +278,34 @@ fun Composer(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.Bottom,
         ) {
-            AddImageButton(
-                enabled = !importingImage,
+            ComposerActionButton(
+                icon = Icons.Rounded.AddPhotoAlternate,
+                contentDescription = "添加图片",
+                enabled = !importingImage && !pdfBusy,
                 onClick = onAddImage,
             )
-            Spacer(Modifier.width(2.dp))
+            ComposerActionButton(
+                icon = Icons.Rounded.PictureAsPdf,
+                contentDescription = "附加 PDF",
+                enabled = !pdfBusy && !isStreaming,
+                onClick = onAttachPdf,
+            )
+            ComposerActionButton(
+                icon = Icons.Rounded.ContentPaste,
+                contentDescription = "从剪贴板粘贴图片或 PDF",
+                enabled = !isStreaming,
+                onClick = onPaste,
+            )
 
             Box(
                 modifier = Modifier
                     .weight(1f)
-                    .padding(top = 7.dp, bottom = 7.dp, start = 3.dp, end = 4.dp)
+                    .padding(top = 7.dp, bottom = 7.dp, start = 4.dp, end = 4.dp)
                     .heightIn(min = 22.dp, max = 150.dp),
             ) {
                 if (draft.isEmpty()) {
                     Text(
-                        text = "输入消息…",
+                        text = "输入消息，或粘贴 PDF / 图片…",
                         style = MaterialTheme.typography.bodyLarge.copy(
                             fontSize = 14.5.sp,
                             lineHeight = 22.sp,
@@ -302,10 +380,10 @@ fun Composer(
 }
 
 @Composable
-private fun AttachmentThumbnail(image: ChatImage, onRemove: () -> Unit) {
+private fun AttachmentThumbnail(attachment: PendingAttachment, onRemove: () -> Unit) {
     Box(modifier = Modifier.size(52.dp)) {
         AsyncImage(
-            model = image.path,
+            model = attachment.previewPath ?: attachment.uri,
             contentDescription = "待发送图片",
             contentScale = ContentScale.Crop,
             modifier = Modifier
@@ -337,12 +415,75 @@ private fun AttachmentThumbnail(image: ChatImage, onRemove: () -> Unit) {
     }
 }
 
+/** Hairline PDF chip that also reports the extraction/OCR state. */
 @Composable
-private fun AddImageButton(enabled: Boolean, onClick: () -> Unit) {
+private fun PdfAttachmentChip(name: String?, busy: Boolean, onRemove: () -> Unit) {
+    val shape = RoundedCornerShape(8.dp)
+    Row(
+        modifier = Modifier
+            .clip(shape)
+            .background(ReinColors.Surface)
+            .border(1.dp, ReinColors.Hairline, shape)
+            .padding(start = 7.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        PdfBadge(size = 26.dp)
+        Spacer(Modifier.width(8.dp))
+        Column(modifier = Modifier.widthIn(max = 196.dp)) {
+            Text(
+                text = name?.takeIf { it.isNotBlank() } ?: "正在解析 PDF…",
+                style = MaterialTheme.typography.labelMedium.copy(fontSize = 11.5.sp),
+                color = ReinColors.TextPrimary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = if (busy) "正在提取文字…" else "已附加",
+                style = MaterialTheme.typography.labelMedium.copy(fontSize = 9.sp),
+                color = ReinColors.TextTertiary,
+            )
+        }
+        if (busy) {
+            Spacer(Modifier.width(8.dp))
+            CircularProgressIndicator(
+                modifier = Modifier.size(13.dp),
+                color = ReinColors.Mint.copy(alpha = 0.8f),
+                strokeWidth = 1.4.dp,
+            )
+        }
+        Spacer(Modifier.width(6.dp))
+        Box(
+            modifier = Modifier
+                .size(20.dp)
+                .clip(CircleShape)
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClick = onRemove,
+                ),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = Icons.Rounded.Close,
+                contentDescription = "移除 PDF",
+                tint = ReinColors.TextTertiary,
+                modifier = Modifier.size(13.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun ComposerActionButton(
+    icon: ImageVector,
+    contentDescription: String,
+    enabled: Boolean,
+    onClick: () -> Unit,
+) {
     val interaction = remember { MutableInteractionSource() }
     Box(
         modifier = Modifier
-            .size(34.dp)
+            .size(32.dp)
             .pressScale(interaction, 0.92f)
             .clip(CircleShape)
             .clickable(
@@ -354,10 +495,10 @@ private fun AddImageButton(enabled: Boolean, onClick: () -> Unit) {
         contentAlignment = Alignment.Center,
     ) {
         Icon(
-            imageVector = Icons.Rounded.AddPhotoAlternate,
-            contentDescription = "添加图片",
+            imageVector = icon,
+            contentDescription = contentDescription,
             tint = ReinColors.TextSecondary.copy(alpha = if (enabled) 0.85f else 0.3f),
-            modifier = Modifier.size(19.dp),
+            modifier = Modifier.size(18.dp),
         )
     }
 }

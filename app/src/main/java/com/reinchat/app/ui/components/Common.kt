@@ -62,6 +62,25 @@ fun ThinkingDots(
     }
 }
 
+/** Compact "PDF" ink plate shared by attachment chips and message chips. */
+@Composable
+fun PdfBadge(size: Dp = 24.dp, modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier
+            .size(size)
+            .clip(RoundedCornerShape(size * 0.28f))
+            .background(ReinColors.TextPrimary),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = "PDF",
+            color = ReinColors.OnInk,
+            fontSize = (size.value * 0.33f).sp,
+            fontWeight = FontWeight.Bold,
+        )
+    }
+}
+
 /**
  * Flat brand mark. Kept under the old name because several screens referenced it;
  * it is now an ink plate with the paper-coloured "R", matching the web wordmark.

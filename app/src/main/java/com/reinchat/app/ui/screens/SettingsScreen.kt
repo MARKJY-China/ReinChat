@@ -59,6 +59,7 @@ import androidx.compose.ui.zIndex
 import com.reinchat.app.BuildConfig
 import com.reinchat.app.data.CloudAccount
 import com.reinchat.app.data.ProviderConfig
+import com.reinchat.app.data.ThemeMode
 import com.reinchat.app.ui.components.GlassDialog
 import com.reinchat.app.ui.components.GlassIconButton
 import com.reinchat.app.ui.components.GlassSurface
@@ -78,6 +79,8 @@ fun SettingsScreen(
     activeProviderId: String?,
     account: CloudAccount?,
     cloudServerUrl: String,
+    themeMode: ThemeMode,
+    fontScale: Float,
     cloudSyncing: Boolean,
     cloudError: String?,
     authBusy: Boolean,
@@ -92,6 +95,8 @@ fun SettingsScreen(
     onRegister: (String, String, String) -> Unit,
     onLogout: () -> Unit,
     onSyncCloud: () -> Unit,
+    onThemeMode: (ThemeMode) -> Unit,
+    onFontScale: (Float) -> Unit,
     onClearAuthError: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -254,6 +259,13 @@ fun SettingsScreen(
                 }
 
                 Spacer(Modifier.height(28.dp))
+                AppearanceSection(
+                    themeMode = themeMode,
+                    fontScale = fontScale,
+                    onThemeMode = onThemeMode,
+                    onFontScale = onFontScale,
+                )
+                Spacer(Modifier.height(24.dp))
                 PrivacyCard()
                 Spacer(Modifier.height(22.dp))
                 AboutSection()
@@ -862,6 +874,120 @@ private fun PrivacyCard() {
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun AppearanceSection(
+    themeMode: ThemeMode,
+    fontScale: Float,
+    onThemeMode: (ThemeMode) -> Unit,
+    onFontScale: (Float) -> Unit,
+) {
+    Column {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = "外观",
+                style = MaterialTheme.typography.titleLarge,
+                color = ReinColors.TextPrimary,
+            )
+            Spacer(Modifier.weight(1f))
+            Text(
+                text = "${(fontScale * 100).toInt()}% 字号",
+                style = MaterialTheme.typography.labelMedium.copy(fontSize = 9.5.sp),
+                color = ReinColors.TextTertiary.copy(alpha = 0.7f),
+            )
+        }
+        Spacer(Modifier.height(11.dp))
+        GlassSurface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(23.dp),
+            topTint = ReinColors.Surface,
+            bottomTint = ReinColors.Surface,
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
+        ) {
+            Text(
+                text = "主题",
+                style = MaterialTheme.typography.labelLarge,
+                color = ReinColors.TextSecondary,
+            )
+            Spacer(Modifier.height(7.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                listOf(
+                    ThemeMode.SYSTEM to "跟随系统",
+                    ThemeMode.LIGHT to "浅色",
+                    ThemeMode.DARK to "深色",
+                ).forEach { (mode, label) ->
+                    AppearanceOption(
+                        label = label,
+                        selected = themeMode == mode,
+                        onClick = { onThemeMode(mode) },
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+            }
+            Spacer(Modifier.height(14.dp))
+            Text(
+                text = "字体大小",
+                style = MaterialTheme.typography.labelLarge,
+                color = ReinColors.TextSecondary,
+            )
+            Spacer(Modifier.height(7.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                listOf(
+                    0.9f to "小",
+                    1f to "标准",
+                    1.15f to "大",
+                    1.3f to "特大",
+                ).forEach { (scale, label) ->
+                    AppearanceOption(
+                        label = label,
+                        selected = kotlin.math.abs(fontScale - scale) < 0.001f,
+                        onClick = { onFontScale(scale) },
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun AppearanceOption(
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val shape = RoundedCornerShape(7.dp)
+    Box(
+        modifier = modifier
+            .clip(shape)
+            .background(if (selected) ReinColors.AccentSoft else ReinColors.DeepElevated)
+            .border(
+                1.dp,
+                if (selected) ReinColors.Mint.copy(alpha = 0.35f) else ReinColors.Hairline,
+                shape,
+            )
+            .clickableNoRipple(onClick)
+            .padding(vertical = 7.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelMedium.copy(fontSize = 10.sp),
+            color = if (selected) ReinColors.Mint else ReinColors.TextSecondary,
+            maxLines = 1,
+        )
     }
 }
 

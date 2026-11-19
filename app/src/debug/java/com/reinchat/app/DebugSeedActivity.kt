@@ -10,6 +10,7 @@ import com.reinchat.app.data.ChatMessage
 import com.reinchat.app.data.Conversation
 import com.reinchat.app.data.ConversationStore
 import com.reinchat.app.data.MessageRole
+import com.reinchat.app.data.MessageSegment
 import com.reinchat.app.data.ProviderConfig
 import com.reinchat.app.data.SecureVault
 import com.reinchat.app.data.SettingsStore
@@ -109,6 +110,8 @@ class DebugSeedActivity : ComponentActivity() {
                     id = "seed-principles-user",
                     role = MessageRole.USER,
                     content = "用三个层次解释液态玻璃的设计原则",
+                    pdfName = "设计系统评审 2026.pdf",
+                    pdfText = "透光：保留底色。折射：用高光与内阴影暗示表面弧度。留白：让内容浮起来。",
                     createdAt = now,
                 ),
                 ChatMessage(
@@ -125,6 +128,24 @@ class DebugSeedActivity : ComponentActivity() {
 
                         > 好的界面不会抢走注意力，而是让内容浮起来。
                     """.trimIndent(),
+                    segments = listOf(
+                        MessageSegment.reasoning(
+                            "用户要的是设计原则，而不是具体实现。先看附件 PDF 里反复出现的三个词：透光、折射、留白。"
+                        ),
+                        MessageSegment.tool(
+                            name = "web_search",
+                            status = MessageSegment.TOOL_STATUS_DONE,
+                            detail = "液态玻璃设计原则\n1. 透：保留底层色彩\n2. 折：高光与内阴影\n3. 动：连续的空间过渡",
+                            label = "搜索网页",
+                        ),
+                        MessageSegment.tool(
+                            name = "fetch_url",
+                            status = MessageSegment.TOOL_STATUS_FAILED,
+                            detail = "读取 https://example.com/glass 失败：连接超时（10s）",
+                            label = "浏览网页",
+                        ),
+                        MessageSegment.reasoning("搜索确认了这三个层次，可以按「透、折、动」组织回答。"),
+                    ),
                     createdAt = now + 1_000,
                 ),
             ),
