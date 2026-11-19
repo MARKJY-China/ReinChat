@@ -36,6 +36,7 @@ import javax.net.ssl.SSLException
 sealed interface StreamEvent {
     data class Delta(val text: String) : StreamEvent
     data class Reasoning(val text: String) : StreamEvent
+    data class Tool(val name: String, val status: String, val detail: String) : StreamEvent
     data object Completed : StreamEvent
 }
 
@@ -151,7 +152,9 @@ class ChatApiClient(private val imageStore: ImageStore) {
     private fun buildPayload(provider: ProviderConfig, history: List<ChatMessage>): String {
         val model = provider.activeModel
         if (model.isBlank()) throw ApiException("请填写模型名称")
-        val relevant = history.filter { it.content.isNotBlank() || it.images.isNotEmpty() }
+        val relevant = history.filter {
+            it.content.isNotBlank() || it.images.isNotEmpty() || it.pdfText.isNotBlank()
+        }
         if (relevant.isEmpty()) throw ApiException("没有可发送的消息")
 
         val body = buildJsonObject {
@@ -187,12 +190,13 @@ class ChatApiClient(private val imageStore: ImageStore) {
         history.forEach { message ->
             add(buildJsonObject {
                 put("role", if (message.role == MessageRole.USER) "user" else "assistant")
+                val content = messageText(message)
                 if (message.role == MessageRole.USER && message.images.isNotEmpty()) {
                     put("content", buildJsonArray {
-                        if (message.content.isNotBlank()) {
+                        if (content.isNotBlank()) {
                             add(buildJsonObject {
                                 put("type", "input_text")
-                                put("text", message.content)
+                                put("text", content)
                             })
                         }
                         message.images.forEach { image ->
@@ -203,7 +207,7 @@ class ChatApiClient(private val imageStore: ImageStore) {
                         }
                     })
                 } else {
-                    put("content", message.content)
+                    put("content", content)
                 }
             })
         }
@@ -220,12 +224,13 @@ class ChatApiClient(private val imageStore: ImageStore) {
             history.forEach { message ->
                 add(buildJsonObject {
                     put("role", if (message.role == MessageRole.USER) "user" else "assistant")
+                    val content = messageText(message)
                     if (message.role == MessageRole.USER && message.images.isNotEmpty()) {
                         put("content", buildJsonArray {
-                            if (message.content.isNotBlank()) {
+                            if (content.isNotBlank()) {
                                 add(buildJsonObject {
                                     put("type", "text")
-                                    put("text", message.content)
+                                    put("text", content)
                                 })
                             }
                             message.images.forEach { image ->
@@ -238,11 +243,26 @@ class ChatApiClient(private val imageStore: ImageStore) {
                             }
                         })
                     } else {
-                        put("content", message.content)
+                        put("content", content)
                     }
                 })
             }
         }
+
+    /**
+     * Direct-provider parity with the relay server: PDF text is inlined into the
+     * message content because chat-completion APIs do not accept a PDF part.
+     */
+    private fun messageText(message: ChatMessage): String {
+        if (message.pdfText.isBlank()) return message.content
+        val name = message.pdfName.ifBlank { "文档.pdf" }
+        val base = message.content.trimEnd()
+        return if (base.isBlank()) {
+            "[附件 PDF：$name]\n${message.pdfText}"
+        } else {
+            "$base\n\n[附件 PDF：$name]\n${message.pdfText}"
+        }
+    }
 
     private sealed interface Parsed {
         data class Reasoning(val text: String) : Parsed

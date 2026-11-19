@@ -16,13 +16,29 @@ enum class MessageStatus {
     COMPLETE,
     STREAMING,
     STOPPED,
-    ERROR,
+    CANCELLED,
+    ERROR;
+
+    /** The provider stream finished or was interrupted; nothing is arriving anymore. */
+    val isTerminal: Boolean
+        get() = this != STREAMING
+
+    /** Both values mean "user stopped the answer"; STOPPED is kept for legacy data. */
+    val isCancelled: Boolean
+        get() = this == STOPPED || this == CANCELLED
 }
 
 @Serializable
 enum class ApiProtocol {
     RESPONSES,
     CHAT_COMPLETIONS,
+}
+
+@Serializable
+enum class ThemeMode {
+    SYSTEM,
+    LIGHT,
+    DARK,
 }
 
 @Serializable
@@ -33,9 +49,54 @@ data class ChatImage(
     val width: Int = 0,
     val height: Int = 0,
     val remoteId: String? = null,
+    /** Original content:// URI; kept for re-reading the image and diagnostics. */
+    val sourceUri: String? = null,
+    val name: String = "",
 ) {
     val aspectRatio: Float
         get() = if (width > 0 && height > 0) width.toFloat() / height else 1f
+}
+
+/**
+ * One ordered piece of the assistant "process" timeline. [type] is either
+ * [TYPE_REASONING] (thinking text) or [TYPE_TOOL] (tool invocation card).
+ */
+@Serializable
+data class MessageSegment(
+    val type: String,
+    val text: String = "",
+    val name: String = "",
+    val label: String = "",
+    val status: String = TOOL_STATUS_RUNNING,
+    val detail: String = "",
+) {
+    companion object {
+        const val TYPE_REASONING = "reasoning"
+        const val TYPE_TOOL = "tool"
+
+        const val TOOL_STATUS_RUNNING = "running"
+        const val TOOL_STATUS_DONE = "done"
+        const val TOOL_STATUS_FAILED = "failed"
+
+        fun reasoning(text: String): MessageSegment = MessageSegment(
+            type = TYPE_REASONING,
+            text = text,
+            status = TOOL_STATUS_DONE,
+        )
+
+        fun tool(
+            name: String,
+            status: String = TOOL_STATUS_RUNNING,
+            detail: String = "",
+            label: String = "",
+        ): MessageSegment = MessageSegment(
+            type = TYPE_TOOL,
+            name = name,
+            label = label.ifBlank { name },
+            status = status,
+            detail = detail.take(4000),
+        )
+    }
 }
 
 @Serializable
@@ -47,15 +108,90 @@ data class ChatMessage(
     val reasoning: String = "",
     val model: String = "",
     val images: List<ChatImage> = emptyList(),
+    /** Name of the attached PDF, persisted so cloud clients can show the chip. */
+    val pdfName: String = "",
+    /** Extracted/OCR text of the attached PDF; also relayed to the provider. */
+    val pdfText: String = "",
+    /** Ordered reasoning/tool timeline parsed from relay SSE. */
+    val segments: List<MessageSegment> = emptyList(),
     val createdAt: Long = System.currentTimeMillis(),
     val status: MessageStatus = MessageStatus.COMPLETE,
     val error: String? = null,
-)
+) {
+    val hasPdf: Boolean
+        get() = pdfName.isNotBlank() || pdfText.isNotBlank()
+}
+
+@Serializable
+enum class PdfAttachmentState {
+    /** File copied locally, text not extracted yet. */
+    PENDING,
+    EXTRACTING,
+    OCR_RUNNING,
+    READY,
+    /** Attached but no text layer and OCR unavailable/empty. */
+    EMPTY,
+    FAILED,
+}
+
+/**
+ * PDF attached to the composer. The original file is copied into the app cache
+ * so OCR and text extraction work on a stable local file.
+ */
+@Serializable
+data class PdfAttachment(
+    val id: String = newId(),
+    val uri: String = "",
+    val localPath: String = "",
+    val name: String = "文档.pdf",
+    val mimeType: String = "application/pdf",
+    val text: String = "",
+    val pages: Int = 0,
+    val ocrUsed: Boolean = false,
+    val state: PdfAttachmentState = PdfAttachmentState.PENDING,
+    val error: String? = null,
+) {
+    val hasText: Boolean
+        get() = text.isNotBlank()
+
+    val busiest: Boolean
+        get() = state == PdfAttachmentState.PENDING ||
+            state == PdfAttachmentState.EXTRACTING ||
+            state == PdfAttachmentState.OCR_RUNNING
+}
+
+enum class PendingAttachmentKind {
+    IMAGE,
+    PDF,
+}
+
+/**
+ * Unified read-only view of composer attachments for the UI. Images are backed
+ * by [ChatImage] (already imported/compressed locally), the PDF by [PdfAttachment].
+ */
+data class PendingAttachment(
+    val id: String,
+    val kind: PendingAttachmentKind,
+    val uri: String = "",
+    val previewPath: String? = null,
+    val name: String = "",
+    val mimeType: String = "",
+    val width: Int = 0,
+    val height: Int = 0,
+    val text: String = "",
+    val pages: Int = 0,
+    val ocrUsed: Boolean = false,
+    val state: PdfAttachmentState? = null,
+    val error: String? = null,
+) {
+    val isPdf: Boolean
+        get() = kind == PendingAttachmentKind.PDF
+}
 
 @Serializable
 data class Conversation(
     val id: String = newId(),
-    val title: String = "新对话",
+    val title: String = DEFAULT_CONVERSATION_TITLE,
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis(),
     val messages: List<ChatMessage> = emptyList(),
@@ -65,9 +201,15 @@ data class Conversation(
 ) {
     val preview: String
         get() {
-            val last = messages.lastOrNull { it.content.isNotBlank() || it.images.isNotEmpty() }
-                ?: return "还没有消息"
-            if (last.content.isBlank()) return "图片 × ${last.images.size}"
+            val last = messages.lastOrNull {
+                it.content.isNotBlank() || it.images.isNotEmpty() || it.hasPdf
+            } ?: return "还没有消息"
+            if (last.content.isBlank()) {
+                return when {
+                    last.hasPdf -> "PDF：${last.pdfName.ifBlank { "文档" }}"
+                    else -> "图片 × ${last.images.size}"
+                }
+            }
             return last.content
                 .lineSequence()
                 .map { line ->
@@ -94,6 +236,18 @@ data class Conversation(
 }
 
 @Serializable
+data class ProviderModel(
+    val id: String = "",
+    val name: String = "",
+    val contextWindow: Int = 0,
+    val maxOutputTokens: Int = 0,
+    val reasoning: Boolean = false,
+) {
+    val displayName: String
+        get() = name.trim().ifBlank { id.trim() }
+}
+
+@Serializable
 data class ProviderConfig(
     val id: String = newId(),
     val name: String = "OpenAI",
@@ -101,6 +255,8 @@ data class ProviderConfig(
     val baseUrl: String = "https://api.openai.com/v1",
     val apiKey: String = "",
     val model: String = "gpt-4o-mini",
+    /** Model directory (id + human-readable name) synced from the server. */
+    val models: List<ProviderModel> = emptyList(),
     val systemPrompt: String = "",
     val temperature: Double? = null,
     val maxTokens: Int? = null,
@@ -114,7 +270,17 @@ data class ProviderConfig(
     val cloudSynced: Boolean = false,
 ) {
     val modelOptions: List<String>
-        get() = modelOptionsOf(model)
+        get() {
+            val declared = modelOptionsOf(model)
+            if (declared.isNotEmpty()) return declared
+            return models.map { it.id.trim() }.filter { it.isNotBlank() }.distinct()
+        }
+
+    /** Model id -> display name for pickers. Unknown ids fall back to the id. */
+    val modelLabels: Map<String, String>
+        get() = models
+            .filter { it.id.isNotBlank() }
+            .associate { it.id.trim() to it.displayName }
 
     val activeModel: String
         get() = selectedModel.trim().takeIf { it in modelOptions }
@@ -135,6 +301,16 @@ fun modelOptionsOf(raw: String): List<String> = raw
 
 const val DEFAULT_CLOUD_SERVER = "https://reinchat.markjy.com"
 
+const val DEFAULT_CONVERSATION_TITLE = "新对话"
+
+/** True while the conversation still carries a placeholder or auto-generated title. */
+fun isDefaultConversationTitle(title: String): Boolean {
+    val trimmed = title.trim()
+    return trimmed.isEmpty() ||
+        trimmed == DEFAULT_CONVERSATION_TITLE ||
+        trimmed == "新会话"
+}
+
 @Serializable
 data class CloudAccount(
     val username: String,
@@ -150,6 +326,9 @@ data class AppSettings(
     val activeProviderId: String? = null,
     val cloudAccount: CloudAccount? = null,
     val cloudServerUrl: String = DEFAULT_CLOUD_SERVER,
+    /** Global UI font scale, 0.85..1.30 (1.0 = default). */
+    val fontScale: Float = 1f,
+    val themeMode: ThemeMode = ThemeMode.SYSTEM,
     val pendingCloudConversationDeletes: List<String> = emptyList(),
     val pendingCloudProviderDeletes: List<String> = emptyList(),
 ) {
@@ -159,7 +338,7 @@ data class AppSettings(
 
 fun titleFromPrompt(text: String, imageCount: Int): String {
     val compact = text.replace(Regex("\\s+"), " ").trim()
-    if (compact.isBlank()) return if (imageCount > 0) "图片对话" else "新对话"
+    if (compact.isBlank()) return if (imageCount > 0) "图片对话" else DEFAULT_CONVERSATION_TITLE
     return if (compact.length <= 30) compact else compact.take(29).trimEnd() + "…"
 }
 

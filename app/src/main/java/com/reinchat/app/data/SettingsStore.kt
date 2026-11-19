@@ -82,6 +82,10 @@ class SettingsStore(
         val providers = settings.providers.distinctBy { it.id }
         val active = settings.activeProviderId?.takeIf { id -> providers.any { it.id == id } }
             ?: providers.firstOrNull()?.id
-        return settings.copy(providers = providers, activeProviderId = active)
+        return settings.copy(
+            providers = providers,
+            activeProviderId = active,
+            fontScale = settings.fontScale.coerceIn(0.85f, 1.30f),
+        )
     }
 }

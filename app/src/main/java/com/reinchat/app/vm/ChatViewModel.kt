@@ -1,6 +1,8 @@
 package com.reinchat.app.vm
 
 import android.app.Application
+import android.content.ClipData
+import android.content.ClipDescription
 import android.net.Uri
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
@@ -14,11 +16,20 @@ import com.reinchat.app.data.ConversationStore
 import com.reinchat.app.data.ImageImportException
 import com.reinchat.app.data.ImageStore
 import com.reinchat.app.data.MessageRole
+import com.reinchat.app.data.MessageSegment
 import com.reinchat.app.data.MessageStatus
+import com.reinchat.app.data.PdfAttachment
+import com.reinchat.app.data.PdfAttachmentState
+import com.reinchat.app.data.PdfImportException
+import com.reinchat.app.data.PdfStore
+import com.reinchat.app.data.PdfTextExtractor
 import com.reinchat.app.data.ProviderConfig
+import com.reinchat.app.data.ProviderModel
 import com.reinchat.app.data.SecureVault
 import com.reinchat.app.data.SettingsStore
+import com.reinchat.app.data.ThemeMode
 import com.reinchat.app.data.friendlyError
+import com.reinchat.app.data.isDefaultConversationTitle
 import com.reinchat.app.data.modelOptionsOf
 import com.reinchat.app.data.newId
 import com.reinchat.app.data.titleFromPrompt
@@ -33,6 +44,7 @@ import com.reinchat.app.net.CloudConflictException
 import com.reinchat.app.net.CloudEndpoint
 import com.reinchat.app.net.CloudMessageDto
 import com.reinchat.app.net.CloudSyncEventDto
+import com.reinchat.app.net.RelayCancelledException
 import com.reinchat.app.net.normalizeApiKey
 import com.reinchat.app.net.ConversationDto
 import com.reinchat.app.net.StreamEvent
@@ -40,6 +52,8 @@ import com.reinchat.app.net.friendlyNetworkError
 import com.reinchat.app.net.roleEnum
 import com.reinchat.app.net.statusEnum
 import com.reinchat.app.net.toDto
+import com.reinchat.app.net.toLocalModel
+import com.reinchat.app.net.toLocalSegment
 import com.reinchat.app.update.AppUpdate
 import com.reinchat.app.update.UpdateChecker
 import com.reinchat.app.update.UpdateDownloadState
@@ -79,10 +93,12 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         private const val STREAM_MIN_CHARS_PER_SECOND = 110.0
         private const val STREAM_MAX_CHARS_PER_SECOND = 760.0
         private const val STREAM_BACKLOG_FACTOR = 4.0
+        private const val TITLE_WAIT_FOR_CLOUD_MS = 20_000L
     }
 
     private val app = application
     private val imageStore = ImageStore(application)
+    private val pdfStore = PdfStore(application)
     private val settingsStore = SettingsStore(application, SecureVault(application))
     private val conversationStore = ConversationStore(application)
     private val api = ChatApiClient(imageStore)
@@ -118,7 +134,11 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     private var streamJob: Job? = null
     private var activeStreamId: String? = null
+    private var activeRelayJobId: String? = null
+    private var relayCancelRequested = false
     private var importJob: Job? = null
+    private var pdfJob: Job? = null
+    private var titleJob: Job? = null
     private var authJob: Job? = null
     private var fullCloudSyncJob: Job? = null
     private var cloudEventsJob: Job? = null
@@ -143,6 +163,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private data class ComposerBackup(
         val draft: String,
         val attachments: List<ChatImage>,
+        val pdf: PdfAttachment?,
     )
 
     init {
@@ -163,6 +184,30 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         _state.update { it.copy(draft = value) }
     }
 
+    /** Global UI scale, clamped to the range the web client exposes (85%..125%). */
+    fun setFontScale(scale: Float) {
+        val clamped = scale.coerceIn(0.85f, 1.30f)
+        if (_state.value.settings.fontScale == clamped) return
+        _state.update { it.copy(settings = it.settings.copy(fontScale = clamped)) }
+        persistSettings()
+    }
+
+    fun setThemeMode(mode: ThemeMode) {
+        if (_state.value.settings.themeMode == mode) return
+        _state.update { it.copy(settings = it.settings.copy(themeMode = mode)) }
+        persistSettings()
+    }
+
+    fun setThemeMode(mode: String) {
+        val parsed = runCatching { ThemeMode.valueOf(mode.trim().uppercase()) }.getOrNull()
+            ?: return
+        setThemeMode(parsed)
+    }
+
+    fun toggleThemeMode(dark: Boolean) {
+        setThemeMode(if (dark) ThemeMode.DARK else ThemeMode.LIGHT)
+    }
+
     fun addImages(uris: List<Uri>) {
         if (uris.isEmpty()) return
         if (importJob?.isActive == true) return
@@ -176,7 +221,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             var added = 0
             for (uri in uris.take(available)) {
                 try {
-                    val image = imageStore.import(uri)
+                    val image = imageStore.import(uri).copy(sourceUri = uri.toString())
                     _state.update { current ->
                         if (current.attachments.size >= MAX_IMAGES) current
                         else current.copy(attachments = current.attachments + image)
@@ -198,10 +243,217 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /**
+     * Intake for the image picker / drag-and-drop. Same behavior as [addImages];
+     * named explicitly so new UI code can distinguish images from PDFs.
+     */
+    fun attachImages(uris: List<Uri>) = addImages(uris)
+
+    /**
+     * Copies [uri] locally, tries a local text extraction and falls back to the
+     * server OCR endpoint when the PDF has no usable text layer. The composer
+     * state exposes progress through [ChatUiState.pdfBusy] / [ChatUiState.pdfError].
+     */
+    fun attachPdf(uri: Uri) {
+        if (pdfJob?.isActive == true) {
+            notice("PDF 正在解析，请稍候")
+            return
+        }
+        pdfJob = viewModelScope.launch {
+            _state.update { it.copy(pdfBusy = true, pdfError = null) }
+            var stored: PdfStore.StoredPdf? = null
+            try {
+                stored = withContext(Dispatchers.IO) { pdfStore.import(uri) }
+                val previousPath = _state.value.pdfAttachment?.localPath.orEmpty()
+                var text = ""
+                var pages = 0
+                try {
+                    val local = withContext(Dispatchers.IO) { PdfTextExtractor.extract(stored.file) }
+                    text = local.text
+                    pages = local.pages
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Throwable) {
+                    // A huge or malformed PDF may fail the local pass; the
+                    // server OCR fallback can still extract something.
+                    Log.w(TAG, "Local PDF extraction failed", e)
+                }
+                var ocrUsed = false
+                val account = _state.value.account
+                val provisional = PdfAttachment(
+                    uri = uri.toString(),
+                    localPath = stored.file.absolutePath,
+                    name = stored.name,
+                    text = text,
+                    pages = pages,
+                    state = when {
+                        text.isNotBlank() -> PdfAttachmentState.READY
+                        account != null -> PdfAttachmentState.OCR_RUNNING
+                        else -> PdfAttachmentState.EMPTY
+                    },
+                    error = if (text.isNotBlank()) null else "未检测到文字层",
+                )
+                _state.update {
+                    it.copy(
+                        pdfAttachment = provisional,
+                        pdfBusy = true,
+                        pdfError = if (text.isBlank() && account != null) {
+                            "未检测到文字层，正在云端 OCR…"
+                        } else null,
+                    )
+                }
+                if (text.isBlank()) {
+                    if (account != null) {
+                        val ocr = withContext(Dispatchers.IO) {
+                            cloudApi.ocrPdf(account, stored.file, stored.mimeType)
+                        }
+                        text = ocr.text.trim()
+                        pages = if (ocr.pages > 0) ocr.pages else pages
+                        ocrUsed = true
+                    } else {
+                        notice("本地未能提取文字，登录后可使用云端 OCR")
+                    }
+                }
+                val attachment = provisional.copy(
+                    text = text,
+                    pages = pages,
+                    ocrUsed = ocrUsed,
+                    state = if (text.isBlank()) PdfAttachmentState.EMPTY else PdfAttachmentState.READY,
+                    error = if (text.isBlank()) "PDF 中没有可提取的文字（可能是扫描件）" else null,
+                )
+                _state.update {
+                    it.copy(
+                        pdfAttachment = attachment,
+                        pdfBusy = false,
+                        pdfError = attachment.error,
+                    )
+                }
+                if (previousPath.isNotBlank() && previousPath != attachment.localPath) {
+                    withContext(Dispatchers.IO) { pdfStore.delete(previousPath) }
+                }
+            } catch (cancel: CancellationException) {
+                stored?.file?.delete()
+                throw cancel
+            } catch (e: PdfImportException) {
+                _state.update { it.copy(pdfBusy = false, pdfError = e.message) }
+                notice(e.message ?: "PDF 导入失败")
+            } catch (e: OutOfMemoryError) {
+                _state.update { it.copy(pdfBusy = false, pdfError = "PDF 太大，无法解析") }
+                notice("PDF 太大，无法解析")
+            } catch (e: Throwable) {
+                Log.w(TAG, "PDF attach failed", e)
+                val message = when (e) {
+                    is CloudAuthException -> "登录已过期，无法使用云端 OCR"
+                    is CloudApiException -> e.message ?: "PDF OCR 失败"
+                    else -> "PDF 解析失败，请重试"
+                }
+                _state.update { state ->
+                    state.copy(
+                        pdfBusy = false,
+                        pdfError = message,
+                        pdfAttachment = state.pdfAttachment?.copy(
+                            state = PdfAttachmentState.EMPTY,
+                            error = message,
+                        ),
+                    )
+                }
+                notice(message)
+            } finally {
+                pdfJob = null
+            }
+        }
+    }
+
+    /** Removes an image by id, or the attached PDF when its id/uri matches. */
     fun removeAttachment(imageId: String) {
+        val snapshot = _state.value
+        val pdf = snapshot.pdfAttachment
+        if (pdf != null &&
+            (imageId == pdf.id || imageId == "pdf" || imageId == pdf.uri)
+        ) {
+            removePdfAttachment()
+            return
+        }
         _state.update { state ->
             state.copy(attachments = state.attachments.filterNot { it.id == imageId })
         }
+    }
+
+    fun removePdfAttachment() {
+        val pdf = _state.value.pdfAttachment ?: return
+        pdfJob?.cancel()
+        pdfJob = null
+        _state.update {
+            it.copy(pdfAttachment = null, pdfBusy = false, pdfError = null)
+        }
+        if (pdf.localPath.isNotBlank()) {
+            viewModelScope.launch(Dispatchers.IO) { pdfStore.delete(pdf.localPath) }
+        }
+    }
+
+    fun clearPdfError() {
+        _state.update { it.copy(pdfError = null) }
+    }
+
+    /**
+     * Clipboard intake. Compose exposes the raw [ClipData]; call this from the
+     * paste gesture. Returns true when at least one attachment was accepted.
+     */
+    fun pasteFromClipboard(clip: ClipData?): Boolean {
+        if (clip == null || clip.itemCount == 0) return false
+        val uris = buildList {
+            for (index in 0 until clip.itemCount) {
+                clip.getItemAt(index).uri?.let(::add)
+            }
+        }
+        return handlePastedUris(uris)
+    }
+
+    /**
+     * Clipboard intake when the platform only provides a [ClipDescription]
+     * plus separately resolved URIs (e.g. drag-and-drop or a permission-gated
+     * clipboard read). Accepts only image or PDF payloads.
+     */
+    fun attachFromClipDescription(description: ClipDescription?, uris: List<Uri>): Boolean {
+        if (uris.isEmpty()) return false
+        if (description != null) {
+            val supported = description.hasMimeType("image/*") ||
+                description.hasMimeType("application/pdf") ||
+                uris.any { looksLikePdfUri(it) }
+            if (!supported) return false
+        }
+        return handlePastedUris(uris)
+    }
+
+    /** Routes a mixed list of image/PDF URIs to the right attachment slot. */
+    fun handlePastedUris(uris: List<Uri>): Boolean {
+        if (uris.isEmpty()) return false
+        val resolver = app.contentResolver
+        val images = mutableListOf<Uri>()
+        var pdfUri: Uri? = null
+        var rejected = 0
+        for (uri in uris) {
+            val mime = runCatching { resolver.getType(uri) }.getOrNull().orEmpty().lowercase()
+            val name = uri.lastPathSegment.orEmpty().lowercase()
+            when {
+                mime.startsWith("image/") -> images += uri
+                mime.contains("pdf") || name.endsWith(".pdf") -> if (pdfUri == null) pdfUri = uri
+                else -> rejected++
+            }
+        }
+        if (images.isNotEmpty()) addImages(images)
+        pdfUri?.let { attachPdf(it) }
+        if (images.isEmpty() && pdfUri == null) {
+            if (rejected > 0) notice("仅支持图片或 PDF 附件")
+            return false
+        }
+        return true
+    }
+
+    private fun looksLikePdfUri(uri: Uri): Boolean {
+        val mime = runCatching { app.contentResolver.getType(uri) }
+            .getOrNull().orEmpty().lowercase()
+        return mime.contains("pdf") || uri.lastPathSegment?.lowercase()?.endsWith(".pdf") == true
     }
 
     fun send() {
@@ -210,8 +462,19 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             notice("正在生成回复，请先停止")
             return
         }
-        val text = snapshot.draft.trim()
-        if (text.isBlank() && snapshot.attachments.isEmpty()) return
+        val pdf = snapshot.pdfAttachment
+        if (pdf != null && pdf.busiest) {
+            notice("PDF 还在解析，请稍候")
+            return
+        }
+        val text = snapshot.draft.trim().ifBlank {
+            when {
+                pdf != null -> "请阅读并分析这份 PDF。"
+                snapshot.attachments.isNotEmpty() -> "请分析这张图片。"
+                else -> ""
+            }
+        }
+        if (text.isBlank() && snapshot.attachments.isEmpty() && pdf == null) return
 
         val provider = snapshot.activeProvider
         if (provider == null) {
@@ -249,6 +512,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             role = MessageRole.USER,
             content = text,
             images = snapshot.attachments,
+            pdfName = pdf?.name.orEmpty(),
+            pdfText = pdf?.text.orEmpty(),
             createdAt = now,
         )
         val assistantMessage = ChatMessage(
@@ -289,9 +554,18 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 activeConversationId = conversation.id,
                 draft = "",
                 attachments = emptyList(),
+                pdfAttachment = null,
+                pdfBusy = false,
+                pdfError = null,
                 editingMessageId = null,
                 newChatCloud = false,
             )
+        }
+        // The extracted text is now stored on the message, so the cached PDF
+        // file is no longer needed.
+        if (pdf != null && pdf.localPath.isNotBlank()) {
+            val path = pdf.localPath
+            viewModelScope.launch(Dispatchers.IO) { pdfStore.delete(path) }
         }
         persistConversations()
         if (conversation.cloud) {
@@ -386,6 +660,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 activeConversationId = updated.id,
                 draft = "",
                 attachments = emptyList(),
+                pdfAttachment = null,
+                pdfBusy = false,
+                pdfError = null,
                 editingMessageId = null,
             )
         }
@@ -399,8 +676,28 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         )
     }
 
-    fun stopStreaming() {
+    /** Kept for existing UI bindings; performs the full stop flow. */
+    fun stopStreaming() = stopGeneration()
+
+    /**
+     * Stops generation locally (cancels the SSE coroutine) and asks the server
+     * to cancel the relay job so it does not keep consuming provider quota.
+     * Partial text is preserved and the message becomes CANCELLED without error.
+     */
+    fun stopGeneration() {
+        if (_state.value.streaming == null) return
+        if (streamJob?.isActive != true) return
+        relayCancelRequested = true
         streamJob?.cancel()
+        val jobId = activeRelayJobId
+        activeRelayJobId = null
+        val account = _state.value.account
+        if (!jobId.isNullOrBlank() && account != null) {
+            viewModelScope.launch(Dispatchers.IO) {
+                runCatching { cloudApi.cancelRelayJob(account, jobId) }
+                    .onFailure { Log.w(TAG, "Relay job cancel failed", it) }
+            }
+        }
     }
 
     private fun startStream(
@@ -411,6 +708,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     ) {
         streamJob?.cancel()
         activeStreamId = assistantId
+        activeRelayJobId = null
+        relayCancelRequested = false
         ChatStreamService.start(app)
         _state.update {
             it.copy(
@@ -418,12 +717,14 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     conversationId = conversationId,
                     messageId = assistantId,
                     startedAt = System.currentTimeMillis(),
+                    phase = StreamPhase.WAITING,
                 )
             )
         }
         streamJob = viewModelScope.launch {
             val received = StringBuilder()
             val receivedReasoning = StringBuilder()
+            val segments = mutableListOf<MessageSegment>()
             var shownChars = 0
             var shownReasoningChars = 0
             var lastSave = System.currentTimeMillis()
@@ -433,13 +734,20 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             // that drains the buffers at an adaptive, frame-paced rate instead
             // of replacing the whole message on every network packet.
             fun publishVisibleText() {
-                if (shownChars <= 0 && shownReasoningChars <= 0) return
+                if (shownChars <= 0 && shownReasoningChars <= 0 && segments.isEmpty()) return
                 updateStreamingContent(
                     conversationId = conversationId,
                     messageId = assistantId,
                     text = received.substring(0, shownChars),
                     reasoning = receivedReasoning.substring(0, shownReasoningChars),
+                    segments = segments.toList(),
                 )
+            }
+
+            fun markStreamingPhase() {
+                val current = _state.value.streaming ?: return
+                if (current.messageId != assistantId || current.phase == StreamPhase.STREAMING) return
+                _state.update { it.copy(streaming = current.copy(phase = StreamPhase.STREAMING)) }
             }
 
             fun flushAllReceived() {
@@ -492,30 +800,59 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             }
 
             try {
-                val account = _state.value.account
-                val events = if (account != null && account.level >= 2) {
+                val relayAccount = _state.value.account?.takeIf { it.level >= 2 }
+                val streamHistory = if (relayAccount != null) {
+                    prepareRelayImages(relayAccount, conversationId, history)
+                } else {
+                    history
+                }
+                val events = if (relayAccount != null) {
                     if (provider.localOnly || !provider.cloudSynced) {
                         withContext(Dispatchers.IO) {
-                            cloudApi.putProvider(account, provider.toDto())
+                            cloudApi.putProvider(relayAccount, provider.toDto())
                         }
                         markProviderSynced(provider.id)
                     }
                     cloudApi.relay(
-                        account = account,
+                        account = relayAccount,
                         providerId = provider.id,
                         conversationId = conversationId,
                         model = provider.activeModel,
                         reasoningEffort = provider.reasoningEffort,
                         search = _state.value.webSearch,
-                        messages = history,
+                        messages = streamHistory,
+                        onJobStarted = { jobId ->
+                            activeRelayJobId = jobId
+                            // The user may have pressed stop while the job was
+                            // being created; cancel it as soon as it exists.
+                            if (relayCancelRequested) {
+                                viewModelScope.launch(Dispatchers.IO) {
+                                    runCatching { cloudApi.cancelRelayJob(relayAccount, jobId) }
+                                        .onFailure { Log.w(TAG, "Relay job cancel failed", it) }
+                                }
+                            }
+                        },
                     )
                 } else {
-                    api.stream(provider, history)
+                    api.stream(provider, streamHistory)
                 }
                 events.collect { event ->
                     when (event) {
-                        is StreamEvent.Delta -> received.append(event.text)
-                        is StreamEvent.Reasoning -> receivedReasoning.append(event.text)
+                        is StreamEvent.Delta -> {
+                            received.append(event.text)
+                            markStreamingPhase()
+                        }
+                        is StreamEvent.Reasoning -> {
+                            receivedReasoning.append(event.text)
+                            appendReasoningSegment(segments, event.text)
+                            markStreamingPhase()
+                            publishVisibleText()
+                        }
+                        is StreamEvent.Tool -> {
+                            upsertToolSegment(segments, event.name, event.status, event.detail)
+                            markStreamingPhase()
+                            publishVisibleText()
+                        }
                         StreamEvent.Completed -> Unit
                     }
                 }
@@ -531,6 +868,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                         status = MessageStatus.ERROR,
                         content = "",
                         reasoning = receivedReasoning.toString(),
+                        segments = segments.toList(),
                         error = "服务商只返回了思考过程，没有生成正文",
                     )
                 } else {
@@ -540,6 +878,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                         status = MessageStatus.COMPLETE,
                         content = received.toString(),
                         reasoning = receivedReasoning.toString(),
+                        segments = segments.toList(),
                         error = null,
                     )
                 }
@@ -549,31 +888,132 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 finishAssistant(
                     conversationId = conversationId,
                     assistantId = assistantId,
-                    status = MessageStatus.STOPPED,
+                    status = MessageStatus.CANCELLED,
                     content = received.toString(),
                     reasoning = receivedReasoning.toString(),
+                    segments = segments.toList(),
                     error = null,
                 )
                 throw cancel
             } catch (error: Throwable) {
                 renderJob?.cancel()
                 flushAllReceived()
+                val cancelled = error is RelayCancelledException
                 finishAssistant(
                     conversationId = conversationId,
                     assistantId = assistantId,
-                    status = MessageStatus.ERROR,
+                    status = if (cancelled) MessageStatus.CANCELLED else MessageStatus.ERROR,
                     content = received.toString(),
                     reasoning = receivedReasoning.toString(),
-                    error = friendlyStreamError(error),
+                    segments = segments.toList(),
+                    error = if (cancelled) null else friendlyStreamError(error),
                 )
             } finally {
                 renderJob?.cancel()
                 if (activeStreamId == assistantId) {
                     activeStreamId = null
+                    activeRelayJobId = null
+                    relayCancelRequested = false
                     streamJob = null
                 }
             }
         }
+    }
+
+    /**
+     * Relay image parts are read from the server file store by their file id,
+     * so every outgoing image must be uploaded first. The returned history uses
+     * images with [ChatImage.remoteId] set, and the local conversation is
+     * updated so a retry/re-sync does not upload the same bytes again.
+     */
+    private suspend fun prepareRelayImages(
+        account: CloudAccount,
+        conversationId: String,
+        history: List<ChatMessage>,
+    ): List<ChatMessage> {
+        var changed = false
+        val updated = history.map { message ->
+            if (message.images.isEmpty()) return@map message
+            var messageChanged = false
+            val images = message.images.map { image ->
+                if (!image.remoteId.isNullOrBlank()) return@map image
+                val uploaded = cloudApi.uploadImage(account, image)
+                messageChanged = true
+                image.copy(
+                    remoteId = uploaded.id,
+                    mimeType = uploaded.mimeType.ifBlank { image.mimeType },
+                )
+            }
+            if (messageChanged) {
+                changed = true
+                message.copy(images = images)
+            } else {
+                message
+            }
+        }
+        if (!changed) return updated
+        val updatedById = updated.associateBy { it.id }
+        _state.update { state ->
+            state.copy(
+                conversations = state.conversations.map { conversation ->
+                    if (conversation.id != conversationId) conversation
+                    else conversation.copy(
+                        messages = conversation.messages.map { message ->
+                            updatedById[message.id] ?: message
+                        }
+                    )
+                }
+            )
+        }
+        persistConversations()
+        return updated
+    }
+
+    private fun appendReasoningSegment(
+        segments: MutableList<MessageSegment>,
+        text: String,
+    ) {
+        if (text.isEmpty()) return
+        val last = segments.lastOrNull()
+        if (last != null && last.type == MessageSegment.TYPE_REASONING) {
+            segments[segments.size - 1] = last.copy(text = last.text + text)
+        } else {
+            segments += MessageSegment.reasoning(text)
+        }
+    }
+
+    private fun upsertToolSegment(
+        segments: MutableList<MessageSegment>,
+        name: String,
+        status: String,
+        detail: String,
+    ) {
+        val toolName = name.ifBlank { "tool" }
+        val normalizedStatus = status.ifBlank { MessageSegment.TOOL_STATUS_RUNNING }
+        val label = toolSegmentLabel(toolName, normalizedStatus)
+        val index = segments.indexOfLast {
+            it.type == MessageSegment.TYPE_TOOL &&
+                it.name == toolName &&
+                it.status == MessageSegment.TOOL_STATUS_RUNNING
+        }
+        if (index >= 0) {
+            val existing = segments[index]
+            segments[index] = existing.copy(
+                status = normalizedStatus,
+                label = label,
+                detail = detail.take(4000).ifBlank { existing.detail },
+            )
+        } else {
+            segments += MessageSegment.tool(toolName, normalizedStatus, detail, label)
+        }
+    }
+
+    private fun toolSegmentLabel(name: String, status: String): String = when (name) {
+        "web_search" ->
+            if (status == MessageSegment.TOOL_STATUS_RUNNING) "正在搜索网页" else "搜索网页"
+        "fetch_url" ->
+            if (status == MessageSegment.TOOL_STATUS_RUNNING) "正在浏览网页" else "浏览网页"
+        else -> name
     }
 
     private fun updateStreamingContent(
@@ -581,6 +1021,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         messageId: String,
         text: String,
         reasoning: String,
+        segments: List<MessageSegment>? = null,
     ) {
         _state.update { state ->
             state.copy(
@@ -589,7 +1030,11 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     else conversation.copy(
                         messages = conversation.messages.map { message ->
                             if (message.id == messageId) {
-                                message.copy(content = text, reasoning = reasoning)
+                                message.copy(
+                                    content = text,
+                                    reasoning = reasoning,
+                                    segments = segments ?: message.segments,
+                                )
                             } else message
                         }
                     )
@@ -604,6 +1049,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         status: MessageStatus,
         content: String,
         reasoning: String = "",
+        segments: List<MessageSegment> = emptyList(),
         error: String?,
     ) {
         if (activeStreamId == assistantId) {
@@ -615,8 +1061,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             if (conversation.id != conversationId) conversation
             else {
                 changed = true
-                val messages = if (status == MessageStatus.STOPPED &&
-                    content.isBlank() && reasoning.isBlank()
+                val messages = if (status.isCancelled &&
+                    content.isBlank() && reasoning.isBlank() && segments.isEmpty()
                 ) {
                     conversation.messages.filterNot { it.id == assistantId }
                 } else {
@@ -624,6 +1070,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                         if (message.id == assistantId) message.copy(
                             content = content,
                             reasoning = reasoning,
+                            segments = segments.ifEmpty { message.segments },
                             status = status,
                             error = error,
                         ) else message
@@ -643,13 +1090,135 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             persistConversations()
             val finished = _state.value.conversations.firstOrNull { it.id == conversationId }
             if (finished?.cloud == true) scheduleCloudConversationSync(conversationId)
+            if (status == MessageStatus.COMPLETE) maybeGenerateTitle(conversationId)
         }
     }
 
     private fun friendlyStreamError(error: Throwable): String = when (error) {
         is ApiException -> friendlyError(error.message)
         is ImageImportException -> error.message ?: "无法读取图片"
+        is CloudAuthException -> "登录已过期，请重新登录"
+        is CloudApiException -> friendlyError(error.message)
         else -> friendlyError(friendlyNetworkError(error))
+    }
+
+    /**
+     * After the first completed exchange, ask the server to generate a title.
+     * Non-blocking: the local [titleFromPrompt] fallback already set at send time
+     * stays in place when the request fails or the conversation is not cloud-backed.
+     *
+     * A brand-new cloud conversation is uploaded asynchronously, so wait briefly
+     * for [Conversation.cloudVersion] to appear before calling the title endpoint
+     * (that endpoint requires the conversation to exist on the server).
+     */
+    private fun maybeGenerateTitle(conversationId: String) {
+        val account = _state.value.account ?: return
+        val initial = _state.value.conversations.firstOrNull { it.id == conversationId } ?: return
+        if (!initial.cloud) return
+        if (titleJob?.isActive == true) return
+        titleJob = viewModelScope.launch(Dispatchers.IO) {
+            try {
+                var conversation = initial
+                var waited = 0L
+                while (conversation.cloudVersion <= 0 && waited < TITLE_WAIT_FOR_CLOUD_MS && isActive) {
+                    delay(500)
+                    waited += 500
+                    conversation = _state.value.conversations
+                        .firstOrNull { it.id == conversationId } ?: return@launch
+                }
+                if (conversation.cloudVersion <= 0) return@launch
+                val users = conversation.messages.filter { it.role == MessageRole.USER }
+                if (users.size != 1) return@launch
+                val first = users.first()
+                val firstText = first.content.ifBlank {
+                    if (first.pdfText.isNotBlank()) "请根据这份 PDF 生成标题：${first.pdfName}" else ""
+                }
+                if (firstText.isBlank() || !isAutoTitle(conversation)) return@launch
+                val provider = _state.value.activeProvider ?: return@launch
+                if (provider.localOnly || provider.activeModel.isBlank()) return@launch
+                if (_state.value.account?.token != account.token) return@launch
+                val generated = cloudApi.generateConversationTitle(
+                    account = account,
+                    conversationId = conversationId,
+                    providerId = provider.id,
+                    model = provider.activeModel,
+                    text = firstText,
+                )
+                if (generated.isNotBlank()) applyGeneratedTitle(conversationId, generated)
+            } catch (cancel: CancellationException) {
+                throw cancel
+            } catch (e: Throwable) {
+                Log.w(TAG, "Conversation title generation failed", e)
+                // Keep the local titleFromPrompt fallback.
+            } finally {
+                titleJob = null
+            }
+        }
+    }
+
+    /** True while the title is a placeholder or the local auto title. */
+    private fun isAutoTitle(conversation: Conversation): Boolean {
+        if (isDefaultConversationTitle(conversation.title)) return true
+        val first = conversation.messages.firstOrNull { it.role == MessageRole.USER }
+            ?: return false
+        return conversation.title == titleFromPrompt(first.content, first.images.size)
+    }
+
+    private fun applyGeneratedTitle(conversationId: String, raw: String) {
+        val title = raw.replace(Regex("\\s+"), " ").trim().take(60)
+        if (title.isBlank() || isDefaultConversationTitle(title)) return
+        val conversation = _state.value.conversations.firstOrNull { it.id == conversationId } ?: return
+        if (!isAutoTitle(conversation)) return
+        val conversations = _state.value.conversations.map {
+            if (it.id == conversationId) it.copy(title = title) else it
+        }.sortedByDescending { it.updatedAt }
+        _state.update { it.copy(conversations = conversations) }
+        persistConversations()
+        if (conversation.cloud) scheduleCloudConversationSync(conversationId)
+    }
+
+    /**
+     * Refreshes provider model directories from `/v1/relay/providers`, which
+     * returns `models: [{id,name,...}]` for cloud-stored providers.
+     */
+    fun refreshProviderModels() {
+        val account = _state.value.account ?: return
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val remote = cloudApi.listRelayProviders(account)
+                if (remote.isEmpty()) return@launch
+                if (_state.value.account?.token != account.token) return@launch
+                var changed = false
+                val current = _state.value.settings
+                val providers = current.providers.map providerLoop@ { local ->
+                    val match = remote.firstOrNull { it.id == local.id } ?: return@providerLoop local
+                    val models = match.models
+                        .map { it.toLocalModel() }
+                        .filter { it.id.isNotBlank() }
+                    if (models.isEmpty()) return@providerLoop local
+                    val modelList = if (match.model.isNotBlank()) {
+                        match.model
+                    } else {
+                        models.joinToString(",") { it.id }
+                    }
+                    if (local.models == models && local.model == modelList) {
+                        local
+                    } else {
+                        changed = true
+                        local.copy(models = models, model = modelList)
+                    }
+                }
+                if (!changed) return@launch
+                _state.update { it.copy(settings = it.settings.copy(providers = providers)) }
+                persistSettings()
+            } catch (cancel: CancellationException) {
+                throw cancel
+            } catch (auth: CloudAuthException) {
+                Log.w(TAG, "Provider models refresh auth expired", auth)
+            } catch (e: Throwable) {
+                Log.w(TAG, "Provider models refresh failed", e)
+            }
+        }
     }
 
     fun beginEdit(messageId: String) {
@@ -662,12 +1231,32 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             it.id == messageId && it.role == MessageRole.USER
         } ?: return
         if (_state.value.editingMessageId == null) {
-            editBackup = ComposerBackup(_state.value.draft, _state.value.attachments)
+            editBackup = ComposerBackup(
+                draft = _state.value.draft,
+                attachments = _state.value.attachments,
+                pdf = _state.value.pdfAttachment,
+            )
+        }
+        val pdf = if (message.hasPdf) {
+            PdfAttachment(
+                name = message.pdfName.ifBlank { "文档.pdf" },
+                text = message.pdfText,
+                state = if (message.pdfText.isBlank()) {
+                    PdfAttachmentState.EMPTY
+                } else {
+                    PdfAttachmentState.READY
+                },
+            )
+        } else {
+            null
         }
         _state.update {
             it.copy(
                 draft = message.content,
                 attachments = message.images,
+                pdfAttachment = pdf,
+                pdfBusy = false,
+                pdfError = null,
                 editingMessageId = message.id,
             )
         }
@@ -680,6 +1269,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             it.copy(
                 draft = backup?.draft.orEmpty(),
                 attachments = backup?.attachments.orEmpty(),
+                pdfAttachment = backup?.pdf,
+                pdfBusy = false,
+                pdfError = null,
                 editingMessageId = null,
             )
         }
@@ -743,6 +1335,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 activeConversationId = conversationId,
                 draft = "",
                 attachments = emptyList(),
+                pdfAttachment = null,
+                pdfBusy = false,
+                pdfError = null,
                 editingMessageId = null,
                 newChatCloud = false,
             )
@@ -758,6 +1353,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 activeConversationId = null,
                 draft = "",
                 attachments = emptyList(),
+                pdfAttachment = null,
+                pdfBusy = false,
+                pdfError = null,
                 editingMessageId = null,
                 newChatCloud = it.isLoggedIn,
             )
@@ -827,6 +1425,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         val previous = current.providers.firstOrNull { it.id == provider.id }
         val localOnly = !_state.value.isLoggedIn || provider.localOnly
         val options = modelOptionsOf(provider.model)
+            .ifEmpty { provider.models.map { it.id.trim() }.filter { it.isNotBlank() }.distinct() }
         val selectedModel = provider.selectedModel.trim()
             .takeIf { it in options }
             ?: previous?.selectedModel?.trim()?.takeIf { it in options }
@@ -835,6 +1434,11 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             name = provider.name.trim().ifBlank { "未命名服务商" },
             baseUrl = provider.baseUrl.trim(),
             model = options.joinToString(","),
+            models = options.map { id ->
+                provider.models.firstOrNull { it.id == id }
+                    ?: previous?.models?.firstOrNull { it.id == id }
+                    ?: ProviderModel(id = id, name = id)
+            },
             selectedModel = selectedModel,
             apiKey = normalizeApiKey(provider.apiKey),
             localOnly = localOnly,
@@ -1034,6 +1638,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 notice(if (register) "注册成功，已登录" else "登录成功")
                 syncCloudData(showNoticeOnError = true)
                 startCloudEvents()
+                refreshProviderModels()
             } catch (e: Throwable) {
                 _state.update {
                     it.copy(authBusy = false, authError = friendlyCloudError(e))
@@ -1178,6 +1783,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             viewModelScope.launch(Dispatchers.IO) { refreshAccountLevel(account) }
         }
         startCloudEvents()
+        refreshProviderModels()
         if (System.currentTimeMillis() - lastCloudSyncAt < 20_000L) return
         syncCloudData(showNoticeOnError = false)
     }
@@ -1481,6 +2087,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 reasoning = message.reasoning,
                 model = message.model,
                 images = images,
+                pdfName = message.pdfName,
+                pdfText = message.pdfText,
+                segments = message.segments.map { it.toLocalSegment() },
                 createdAt = message.createdAt.takeIf { it > 0 } ?: System.currentTimeMillis(),
                 status = message.statusEnum(),
                 error = message.error,
@@ -1688,6 +2297,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 authError = null,
                 draft = "",
                 attachments = emptyList(),
+                pdfAttachment = null,
+                pdfBusy = false,
+                pdfError = null,
                 editingMessageId = null,
             )
         }
@@ -1737,6 +2349,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     override fun onCleared() {
         streamJob?.cancel()
         importJob?.cancel()
+        pdfJob?.cancel()
+        titleJob?.cancel()
         ChatStreamService.stop(getApplication())
         super.onCleared()
     }

@@ -68,12 +68,15 @@ class ConversationStore(context: Context) {
         val cleaned = conversation.messages.mapNotNull { message ->
             when {
                 message.status == MessageStatus.STREAMING -> {
-                    if (message.content.isBlank()) null else message.copy(
-                        status = MessageStatus.STOPPED,
+                    if (message.content.isBlank() && message.reasoning.isBlank()) null else message.copy(
+                        status = MessageStatus.CANCELLED,
                         error = null,
                     )
                 }
-                message.status == MessageStatus.STOPPED && message.content.isBlank() -> null
+                message.status.isCancelled &&
+                    message.content.isBlank() &&
+                    message.reasoning.isBlank() &&
+                    message.segments.isEmpty() -> null
                 else -> message
             }
         }

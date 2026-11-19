@@ -5,10 +5,13 @@ import com.reinchat.app.data.ChatMessage
 import com.reinchat.app.data.CloudAccount
 import com.reinchat.app.data.Conversation
 import com.reinchat.app.data.MessageRole
+import com.reinchat.app.data.MessageSegment
 import com.reinchat.app.data.MessageStatus
 import com.reinchat.app.data.ProviderConfig
+import com.reinchat.app.data.ProviderModel
 import com.reinchat.app.data.ApiProtocol
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
@@ -38,6 +41,9 @@ open class CloudApiException(
 
 class CloudAuthException(message: String = "登录已过期，请重新登录") :
     CloudApiException("unauthorized", message, 401)
+
+class RelayCancelledException(message: String = "生成已取消") :
+    CloudApiException("cancelled", message)
 
 class CloudConflictException(
     message: String,
@@ -85,6 +91,15 @@ data class CloudAuthDto(
 )
 
 @Serializable
+data class ProviderModelDto(
+    val id: String = "",
+    val name: String = "",
+    val contextWindow: Int = 0,
+    val maxOutputTokens: Int = 0,
+    val reasoning: Boolean = false,
+)
+
+@Serializable
 data class ProviderDto(
     val id: String,
     val name: String = "",
@@ -92,6 +107,7 @@ data class ProviderDto(
     val baseUrl: String = "",
     val apiKey: String = "",
     val model: String = "",
+    val models: List<ProviderModelDto> = emptyList(),
     val systemPrompt: String = "",
     val temperature: Double? = null,
     val maxTokens: Int? = null,
@@ -107,11 +123,24 @@ data class CloudImageRefDto(
 )
 
 @Serializable
+data class MessageSegmentDto(
+    val type: String,
+    val text: String = "",
+    val name: String = "",
+    val label: String = "",
+    val status: String = "",
+    val detail: String = "",
+)
+
+@Serializable
 data class CloudMessageDto(
     val id: String,
     val role: String,
     val content: String = "",
     val reasoning: String = "",
+    val pdfName: String = "",
+    val pdfText: String = "",
+    val segments: List<MessageSegmentDto> = emptyList(),
     val model: String = "",
     val images: List<CloudImageRefDto> = emptyList(),
     val createdAt: Long = 0,
@@ -145,6 +174,24 @@ data class ConversationListDto(val conversations: List<ConversationSummaryDto> =
 
 @Serializable
 data class ProviderListDto(val providers: List<ProviderDto> = emptyList())
+
+@Serializable
+data class RelayProviderDto(
+    val id: String,
+    val name: String = "",
+    val protocol: String = "",
+    val model: String = "",
+    val models: List<ProviderModelDto> = emptyList(),
+)
+
+@Serializable
+data class RelayProviderListDto(val providers: List<RelayProviderDto> = emptyList())
+
+@Serializable
+data class PdfOcrDto(
+    val text: String = "",
+    val pages: Int = 0,
+)
 
 @Serializable
 data class CloudSyncEventDto(
@@ -185,13 +232,36 @@ private data class RelayRequestDto(
 private data class RelayJobDto(val id: String = "", val status: String = "")
 
 @Serializable
+private data class RelayToolDto(
+    val type: String = "tool",
+    val tool: String = "",
+    val name: String = "",
+    val status: String = "running",
+    val detail: String = "",
+)
+
+@Serializable
 private data class RelayEventDto(
     val type: String = "",
     val text: String = "",
     val reasoning: String = "",
     val status: String = "",
     val error: String = "",
+    val tool: String = "",
+    val name: String = "",
+    val detail: String = "",
+    val tools: List<RelayToolDto> = emptyList(),
 )
+
+@Serializable
+private data class ConversationTitleRequest(
+    val providerId: String,
+    val model: String,
+    val text: String,
+)
+
+@Serializable
+private data class ConversationTitleResponse(val title: String = "")
 
 @Serializable
 private data class ErrorBody(val code: String? = null, val message: String? = null)
@@ -208,9 +278,19 @@ class CloudApiClient {
 
     private val client = OkHttpClient.Builder()
         .connectTimeout(20, TimeUnit.SECONDS)
-        .writeTimeout(60, TimeUnit.SECONDS)
+        .writeTimeout(120, TimeUnit.SECONDS)
         .readTimeout(60, TimeUnit.SECONDS)
-        .callTimeout(120, TimeUnit.SECONDS)
+        // Relay event streams run for as long as the model generates. An overall
+        // call timeout here would kill long answers mid-stream; idle connections
+        // are already covered by readTimeout plus server keep-alive pings.
+        .callTimeout(0, TimeUnit.MILLISECONDS)
+        .build()
+
+    /** PDF OCR can take minutes on the server; it needs its own generous budget. */
+    private val ocrClient = client.newBuilder()
+        .writeTimeout(180, TimeUnit.SECONDS)
+        .readTimeout(220, TimeUnit.SECONDS)
+        .callTimeout(240, TimeUnit.SECONDS)
         .build()
 
     suspend fun register(serverUrl: String, username: String, password: String): CloudAuthDto =
@@ -288,6 +368,7 @@ class CloudApiClient {
         reasoningEffort: String,
         search: Boolean,
         messages: List<ChatMessage>,
+        onJobStarted: ((String) -> Unit)? = null,
     ): Flow<StreamEvent> = flow {
         val payload = RelayRequestDto(
             providerId = providerId,
@@ -295,36 +376,25 @@ class CloudApiClient {
             model = model,
             reasoningEffort = reasoningEffort,
             search = search,
-            messages = messages.map { message ->
-                CloudMessageDto(
-                    id = message.id,
-                    role = message.role.name.lowercase(),
-                    content = message.content,
-                    images = message.images.map { image ->
-                        CloudImageRefDto(
-                            id = image.id,
-                            remoteId = image.remoteId,
-                            mimeType = image.mimeType,
-                            width = image.width,
-                            height = image.height,
-                        )
-                    },
-                    createdAt = message.createdAt,
-                    status = message.status.name,
-                    error = message.error,
-                )
-            },
+            messages = messages.map(::relayMessageDto),
         )
         val request = authorized(account, "relay/jobs")
             .post(json.encodeToString(payload).toRequestBody(JSON))
             .build()
         val job = executeJson(request) { json.decodeFromString<RelayJobDto>(it) }
         if (job.id.isBlank()) throw CloudApiException("relay_error", "服务端没有返回任务 ID")
+        onJobStarted?.invoke(job.id)
         val eventRequest = authorized(account, "relay/jobs/${job.id}/events")
             .header("Accept", "text/event-stream")
             .get()
             .build()
         val call = client.newCall(eventRequest)
+        // Cancelling the collecting coroutine (stop button, screen clear) must
+        // abort the blocking SSE read; call.cancel() in finally alone would run
+        // only after readUtf8Line returned.
+        val cancellation = currentCoroutineContext()[Job]?.invokeOnCompletion { cause ->
+            if (cause != null) call.cancel()
+        }
         try {
             call.execute().use { response ->
                 if (!response.isSuccessful) {
@@ -344,23 +414,71 @@ class CloudApiClient {
                             if (event != null) {
                                 when (event.type) {
                                     "snapshot" -> {
+                                        event.tools.forEach { tool ->
+                                            val name = tool.tool.ifBlank { tool.name }
+                                            if (name.isNotBlank()) {
+                                                emit(
+                                                    StreamEvent.Tool(
+                                                        name = name,
+                                                        status = tool.status.ifBlank { "running" },
+                                                        detail = tool.detail,
+                                                    )
+                                                )
+                                            }
+                                        }
                                         if (event.text.isNotEmpty()) emit(StreamEvent.Delta(event.text))
-                                        if (event.reasoning.isNotEmpty()) emit(StreamEvent.Reasoning(event.reasoning))
+                                        if (event.reasoning.isNotEmpty()) {
+                                            emit(StreamEvent.Reasoning(event.reasoning))
+                                        }
                                     }
                                     "delta" -> if (event.text.isNotEmpty()) emit(StreamEvent.Delta(event.text))
-                                    "reasoning" -> if (event.text.isNotEmpty()) emit(StreamEvent.Reasoning(event.text))
-                                    "error" -> throw CloudApiException("relay_error", event.error.ifBlank { "服务端中转失败" })
-                                    "status" -> if (event.status == "completed") {
-                                        emit(StreamEvent.Completed)
-                                        return@flow
+                                    "reasoning" -> if (event.text.isNotEmpty()) {
+                                        emit(StreamEvent.Reasoning(event.text))
+                                    }
+                                    "tool" -> {
+                                        val name = event.tool.ifBlank { event.name }
+                                        if (name.isNotBlank()) {
+                                            emit(
+                                                StreamEvent.Tool(
+                                                    name = name,
+                                                    status = event.status.ifBlank { "running" },
+                                                    detail = event.detail,
+                                                )
+                                            )
+                                        }
+                                    }
+                                    "error" -> throw CloudApiException(
+                                        "relay_error",
+                                        event.error.ifBlank { "服务端中转失败" },
+                                    )
+                                    "status" -> when (event.status) {
+                                        "completed" -> {
+                                            emit(StreamEvent.Completed)
+                                            return@flow
+                                        }
+                                        "cancelled" -> throw RelayCancelledException(
+                                            event.error.ifBlank { "生成已取消" }
+                                        )
+                                        "failed" -> throw CloudApiException(
+                                            "relay_error",
+                                            event.error.ifBlank { "服务端中转失败" },
+                                        )
                                     }
                                 }
-                                if (event.status == "failed" || event.status == "cancelled") {
-                                    throw CloudApiException("relay_error", event.error.ifBlank { "服务端中转失败" })
-                                }
-                                if (event.type == "snapshot" && event.status == "completed") {
-                                    emit(StreamEvent.Completed)
-                                    return@flow
+                                if (event.type == "snapshot" && event.status.isNotBlank()) {
+                                    when (event.status) {
+                                        "completed" -> {
+                                            emit(StreamEvent.Completed)
+                                            return@flow
+                                        }
+                                        "cancelled" -> throw RelayCancelledException(
+                                            event.error.ifBlank { "生成已取消" }
+                                        )
+                                        "failed" -> throw CloudApiException(
+                                            "relay_error",
+                                            event.error.ifBlank { "服务端中转失败" },
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -370,6 +488,7 @@ class CloudApiClient {
                 }
             }
         } finally {
+            cancellation?.dispose()
             call.cancel()
         }
     }.flowOn(Dispatchers.IO)
@@ -470,6 +589,85 @@ class CloudApiClient {
             }
         }
 
+    suspend fun listRelayProviders(account: CloudAccount): List<RelayProviderDto> =
+        withContext(Dispatchers.IO) {
+            val request = authorized(account, "relay/providers").get().build()
+            executeJson(request) { json.decodeFromString<RelayProviderListDto>(it).providers }
+        }
+
+    /**
+     * Server-side OCR for PDFs without a text layer (multipart `file` field).
+     * The server renders pages with pdftoppm and runs tesseract; it can take a
+     * few minutes, so this call uses the generous [ocrClient] budget.
+     */
+    suspend fun ocrPdf(
+        account: CloudAccount,
+        file: File,
+        mimeType: String = "application/pdf",
+    ): PdfOcrDto = withContext(Dispatchers.IO) {
+        if (!file.isFile) throw CloudApiException("pdf_missing", "本地 PDF 不存在，无法识别")
+        val multipart = MultipartBody.Builder()
+            .setType(MultipartBody.FORM)
+            .addFormDataPart("file", file.name, file.asRequestBody(mimeType.toMediaType()))
+            .build()
+        val request = authorized(account, "pdf/ocr").post(multipart).build()
+        val response = ocrClient.newCall(request).execute()
+        response.use {
+            val text = response.body?.string().orEmpty()
+            if (!response.isSuccessful) throw errorFor(response.code, text)
+            runCatching { json.decodeFromString<PdfOcrDto>(text) }.getOrElse {
+                throw CloudApiException("bad_response", "服务器返回了无法解析的 OCR 数据")
+            }
+        }
+    }
+
+    /**
+     * Asks the server to cancel a running relay job. A job that already ended
+     * returns 404/409; both are treated as success because the goal (no more
+     * generation) is already satisfied.
+     */
+    suspend fun cancelRelayJob(account: CloudAccount, jobId: String): Boolean =
+        withContext(Dispatchers.IO) {
+            if (jobId.isBlank()) return@withContext false
+            val request = authorized(account, "relay/jobs/$jobId/cancel")
+                .post(EMPTY)
+                .build()
+            val response = client.newCall(request).execute()
+            response.use {
+                when {
+                    response.isSuccessful -> true
+                    response.code == 404 || response.code == 409 -> true
+                    else -> throw errorFor(response.code, response.body?.string().orEmpty())
+                }
+            }
+        }
+
+    /** Generates a short conversation title from the first user message. */
+    suspend fun generateConversationTitle(
+        account: CloudAccount,
+        conversationId: String,
+        providerId: String,
+        model: String,
+        text: String,
+    ): String = withContext(Dispatchers.IO) {
+        if (conversationId.isBlank() || providerId.isBlank() || text.isBlank()) {
+            return@withContext ""
+        }
+        val body = json.encodeToString(
+            ConversationTitleRequest(
+                providerId = providerId,
+                model = model,
+                text = text.take(4000),
+            )
+        )
+        val request = authorized(account, "conversations/$conversationId/title")
+            .post(body.toRequestBody(JSON))
+            .build()
+        executeJson(request) {
+            json.decodeFromString<ConversationTitleResponse>(it).title.trim()
+        }
+    }
+
     private fun baseUrl(serverUrl: String): HttpUrl =
         CloudEndpoint.normalize(serverUrl).toHttpUrlOrNull()
             ?: throw CloudApiException("bad_server", "服务器地址格式不正确")
@@ -532,6 +730,9 @@ class CloudApiClient {
         role = message.role.name.lowercase(),
         content = message.content,
         reasoning = message.reasoning,
+        pdfName = message.pdfName,
+        pdfText = message.pdfText,
+        segments = message.segments.map(::segmentDto),
         model = message.model,
         images = message.images.map { image ->
             CloudImageRefDto(
@@ -543,9 +744,46 @@ class CloudApiClient {
             )
         },
         createdAt = message.createdAt,
-        status = message.status.name,
+        status = wireStatus(message.status),
         error = message.error,
     )
+
+    /**
+     * Relay jobs read image bytes from the server file store by [CloudImageRefDto.id],
+     * so the cloud file id must be used as the id there (same as the web client).
+     * Conversation sync keeps the local id and puts the cloud id in remoteId.
+     */
+    private fun relayMessageDto(message: ChatMessage): CloudMessageDto =
+        messageDto(message).copy(
+            images = message.images.map { image ->
+                val remote = image.remoteId?.takeIf { it.isNotBlank() }
+                CloudImageRefDto(
+                    id = remote ?: image.id,
+                    remoteId = remote,
+                    mimeType = image.mimeType,
+                    width = image.width,
+                    height = image.height,
+                )
+            },
+        )
+
+    private fun segmentDto(segment: MessageSegment): MessageSegmentDto = MessageSegmentDto(
+        type = segment.type,
+        text = segment.text,
+        name = segment.name,
+        label = segment.label,
+        status = segment.status,
+        detail = segment.detail,
+    )
+
+    /**
+     * The server only accepts COMPLETE/STOPPED/ERROR for stored messages.
+     * CANCELLED is the richer local/web status; it is stored as STOPPED.
+     */
+    private fun wireStatus(status: MessageStatus): String = when (status) {
+        MessageStatus.CANCELLED -> "STOPPED"
+        else -> status.name
+    }
 
     @Serializable
     private data class AuthRequest(val username: String, val password: String)
@@ -566,11 +804,28 @@ fun ProviderDto.toLocalProvider(): ProviderConfig = ProviderConfig(
     baseUrl = baseUrl,
     apiKey = apiKey,
     model = model,
+    models = models.map { it.toLocalModel() },
     systemPrompt = systemPrompt,
     temperature = temperature,
     maxTokens = maxTokens,
     localOnly = false,
     cloudSynced = true,
+)
+
+fun ProviderModelDto.toLocalModel(): ProviderModel = ProviderModel(
+    id = id,
+    name = name,
+    contextWindow = contextWindow,
+    maxOutputTokens = maxOutputTokens,
+    reasoning = reasoning,
+)
+
+fun ProviderModel.toDto(): ProviderModelDto = ProviderModelDto(
+    id = id,
+    name = name,
+    contextWindow = contextWindow,
+    maxOutputTokens = maxOutputTokens,
+    reasoning = reasoning,
 )
 
 fun ProviderConfig.toDto(): ProviderDto = ProviderDto(
@@ -580,6 +835,7 @@ fun ProviderConfig.toDto(): ProviderDto = ProviderDto(
     baseUrl = baseUrl,
     apiKey = apiKey,
     model = model,
+    models = models.map { it.toDto() },
     systemPrompt = systemPrompt,
     temperature = temperature,
     maxTokens = maxTokens,
@@ -588,5 +844,17 @@ fun ProviderConfig.toDto(): ProviderDto = ProviderDto(
 fun CloudMessageDto.roleEnum(): MessageRole = runCatching { MessageRole.valueOf(role.uppercase()) }
     .getOrDefault(MessageRole.ASSISTANT)
 
-fun CloudMessageDto.statusEnum(): MessageStatus = runCatching { MessageStatus.valueOf(status.uppercase()) }
-    .getOrDefault(MessageStatus.COMPLETE)
+fun CloudMessageDto.statusEnum(): MessageStatus = when (status.uppercase()) {
+    "CANCELLED" -> MessageStatus.CANCELLED
+    else -> runCatching { MessageStatus.valueOf(status.uppercase()) }
+        .getOrDefault(MessageStatus.COMPLETE)
+}
+
+fun MessageSegmentDto.toLocalSegment(): MessageSegment = MessageSegment(
+    type = type,
+    text = text,
+    name = name,
+    label = label,
+    status = status.ifBlank { MessageSegment.TOOL_STATUS_RUNNING },
+    detail = detail,
+)
