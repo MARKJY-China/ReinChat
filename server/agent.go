@@ -68,7 +68,10 @@ func (s *Server) runRelaySearchAgent(ctx context.Context, jobID string, p *relay
 	body := chatBody(p, base, model, effort)
 	body["stream"] = false
 	body["tools"] = tools
-	body["tool_choice"] = "auto"
+	body["tool_choice"] = map[string]any{
+		"type":     "function",
+		"function": map[string]any{"name": "web_search"},
+	}
 	resp, status, err := postChatJSON(ctx, p, body)
 	if err != nil || status < 200 || status >= 300 {
 		return false
