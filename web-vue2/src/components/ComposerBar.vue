@@ -2,6 +2,7 @@
   <footer class="composer-dock">
     <div class="composer">
       <div class="pdf-chip" v-if="pdfName"><span class="pdf-icon">PDF</span><span class="pdf-name">{{ pdfName }}</span><button class="pdf-remove" @click="$emit('remove-pdf')">×</button></div>
+      <p class="pdf-error" v-if="pdfError">{{ pdfError }}</p>
       <div class="image-strip" v-if="imagePreviews && imagePreviews.length">
         <span v-for="(img, index) in imagePreviews" :key="index" class="image-thumb"><img :src="img.url" :alt="img.name" @click="previewIndex = index"><button @click="$emit('remove-image', index)">×</button></span>
       </div>
@@ -37,7 +38,7 @@ export default {
     providerId: String, model: String, reasoningEffort: String, search: Boolean,
     draft: String, sending: Boolean, level: Number,
     providerOptions: Array, modelOptions: Array, reasoningOptions: Array,
-    pdfName: { type: String, default: '' }, pdfBusy: Boolean,
+    pdfName: { type: String, default: '' }, pdfBusy: Boolean, pdfError: { type: String, default: '' },
     imagePreviews: { type: Array, default: () => [] },
   },
   data() { return { openDropdown: '', previewIndex: -1 }; },

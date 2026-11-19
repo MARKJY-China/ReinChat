@@ -387,3 +387,14 @@ html.dark .rail-list:hover::-webkit-scrollbar-thumb { background: rgba(235,231,2
 .lightbox-enter, .lightbox-leave-to { opacity: 0; }
 .turn.user .message-images { justify-content: flex-end; margin-left: auto; max-width: 88%; }
 .turn.user .message-pdf { margin-left: auto; }
+.thread { scrollbar-width: thin; scrollbar-color: transparent transparent; }
+.thread:hover { scrollbar-color: rgba(22,22,19,.28) transparent; }
+.thread::-webkit-scrollbar { width: 8px; height: 8px; }
+.thread::-webkit-scrollbar-track { background: transparent; }
+.thread::-webkit-scrollbar-thumb { background: rgba(22,22,19,.12); border-radius: 99px; }
+.thread:hover::-webkit-scrollbar-thumb { background: rgba(22,22,19,.28); }
+html.dark .thread { scrollbar-color: transparent transparent; }
+html.dark .thread:hover { scrollbar-color: rgba(235,231,220,.28) transparent; }
+html.dark .thread::-webkit-scrollbar-thumb { background: rgba(235,231,220,.13); }
+html.dark .thread:hover::-webkit-scrollbar-thumb { background: rgba(235,231,220,.3); }
+.pdf-error { margin: 5px 0 0; color: var(--danger); font-size: 10.5px; }

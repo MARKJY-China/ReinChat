@@ -86,7 +86,7 @@
       <ComposerBar
         :provider-id="providerId" :model="model" :reasoning-effort="reasoningEffort" :search="search" :draft="draft" :sending="sending" :level="level"
         :provider-options="providerOptions" :model-options="modelOptions" :reasoning-options="reasoningOptions"
-        :pdf-name="pdfAttachment ? pdfAttachment.name : ''" :pdf-busy="pdfBusy" :image-previews="imageAttachments"
+        :pdf-name="pdfAttachment ? pdfAttachment.name : ''" :pdf-busy="pdfBusy" :pdf-error="pdfError" :image-previews="imageAttachments"
         @update:providerId="setProvider" @update:model="model = $event" @update:reasoningEffort="reasoningEffort = $event"
         @update:search="search = $event" @update:draft="draft = $event" @send="send" @stop="stopGeneration"
         @attach-pdf="attachPdf" @remove-pdf="pdfAttachment = null" @paste-files="handlePastedFiles" @remove-image="imageAttachments.splice($event, 1)" />
@@ -190,7 +190,7 @@ export default {
       providerModal: false, providerDraft: null, providerBusy: false, providerError: '',
       providerModelsLoading: false, settingsOpen: false,
       fontScale: Number(localStorage.getItem('reinchat_font_scale') || 1),
-      pdfAttachment: null, pdfBusy: false, imageAttachments: [], followBottom: true,
+      pdfAttachment: null, pdfBusy: false, pdfError: '', imageAttachments: [], followBottom: true,
       convMenu: null, pinnedIds: JSON.parse(localStorage.getItem('reinchat_pins') || '[]'),
       selectionMode: false, selectedIds: [], renamingId: '', renameDraft: '',
     };
@@ -565,12 +565,12 @@ export default {
       if (!file || this.pdfBusy) return;
       if (file.type !== 'application/pdf' && !/\.pdf$/i.test(file.name)) { this.authError = '请选择 PDF 文件'; return; }
       if (file.size > 40 * 1024 * 1024) { this.authError = 'PDF 不能超过 40MB'; return; }
-      this.pdfBusy = true; this.authError = '';
+      this.pdfBusy = true; this.authError = ''; this.pdfError = '';
       try {
         const parsed = await extractPdfText(file);
         this.pdfAttachment = parsed;
-        if (!parsed.text) this.authError = 'PDF 中没有可提取的文字（可能是扫描件）';
-      } catch (e) { this.authError = 'PDF 解析失败：' + e.message; } finally { this.pdfBusy = false; }
+        if (!parsed.text) this.pdfError = 'PDF 中没有可提取的文字（可能是扫描件）';
+      } catch (e) { this.pdfError = 'PDF 解析失败：' + (e.message || '未知错误'); } finally { this.pdfBusy = false; }
     },
     async sendText(text, retry, pdf, images) {
       if (!this.active) this.newConversation();
@@ -643,6 +643,7 @@ export default {
       else segments.push({ type: 'reasoning', text });
       this.$set(assistant, 'segments', segments);
       assistant.reasoning = (assistant.reasoning || '') + text;
+      if (this.followBottom) this.scrollThreadToBottom();
     },
     upsertTool(assistant, name, status, detail) {
       const segments = (assistant.segments || []).slice();
@@ -656,6 +657,7 @@ export default {
       if (detail) segment.detail = String(detail).slice(0, 4000);
       if (status === 'done') segment.label = name === 'web_search' ? '搜索网页' : name === 'fetch_url' ? '浏览网页' : name;
       this.$set(assistant, 'segments', segments);
+      if (this.followBottom) this.scrollThreadToBottom();
     },
     async responseError(res, label) {
       const raw = await res.text();
@@ -765,6 +767,7 @@ export default {
             });
           }
         });
+        await this.hydrateImages(saved);
         this.$set(this.conversationCache, saved.id, saved);
         if (this.activeId === saved.id) { this.active = saved; this.setConversationUrl(saved.id); }
         await this.refresh();

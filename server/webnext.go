@@ -47,7 +47,7 @@ func contentTypeFor(name string) string {
 	switch ext {
 	case ".html":
 		return "text/html; charset=utf-8"
-	case ".js":
+	case ".js", ".mjs":
 		return "text/javascript; charset=utf-8"
 	case ".css":
 		return "text/css; charset=utf-8"
