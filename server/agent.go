@@ -85,71 +85,10 @@ func (s *Server) runRelaySearchAgent(ctx context.Context, jobID string, p *relay
 		"role":    "system",
 		"content": "联网调查模式：如果还需要继续搜索或浏览，请先在 content 里用一两句话向用户汇报当前进展，再发起工具调用；工具结果返回后继续调查，直到可以给出完整答案。不要为了展示工具而搜索。",
 	}}, base...)
-	body := chatBody(p, base, model, effort)
-	body["stream"] = false
-	body["tools"] = tools
-	// Let the model decide. The 联网 toggle is an affordance, not a mandate:
-	// searching on every turn turns a tool into a hard-coded pipeline step.
-	body["tool_choice"] = "auto"
-	resp, status, err := postChatJSON(ctx, p, body)
-	if err != nil || status < 200 || status >= 300 {
-		return false
-	}
-	choice := firstChoice(resp)
-	if choice == nil {
-		return false
-	}
-	calls := choice.ToolCalls
-	content := choice.Content
-	if len(calls) == 0 {
-		// DeepSeek-style models may put DSML tool tags in content/reasoning
-		// instead of returning OpenAI tool_calls.
-		calls = parseDSMLCalls(content + "\n" + choice.Reasoning)
-		content = cleanDSMLText(content)
-	}
-	if len(calls) == 0 {
-		// The model answered directly. This decision call is non-streaming, so
-		// replay its text in small chunks to keep the UI progressive.
-		text := cleanDSMLText(content)
-		if text == "" {
-			return false
-		}
-		reasoning := cleanDSMLText(choice.Reasoning)
-		_ = s.updateRelayJob(jobID, "completed", &text, &reasoning, "")
-		publishTextChunks(ctx, s, jobID, "reasoning", reasoning)
-		publishTextChunks(ctx, s, jobID, "delta", text)
-		s.relay.publish(jobID, relayEvent{Type: "status", Status: "completed"})
-		return true
-	}
-
-	decisionReasoning := cleanDSMLText(choice.Reasoning)
-	if decisionReasoning != "" {
-		publishTextChunks(ctx, s, jobID, "reasoning", decisionReasoning)
-	}
-	assistant := map[string]any{"role": "assistant", "content": content}
-	callPayload := make([]map[string]any, 0, len(calls))
-	for _, call := range calls {
-		callPayload = append(callPayload, map[string]any{
-			"id": call.ID, "type": "function",
-			"function": map[string]any{"name": call.Function.Name, "arguments": call.Function.Arguments},
-		})
-	}
-	assistant["tool_calls"] = callPayload
-	base = append(base, assistant)
-	for _, call := range calls {
-		s.relay.publish(jobID, relayEvent{Type: "status", Status: "tools"})
-		result := s.executeToolCall(ctx, jobID, call.ID, call.Function.Name, call.Function.Arguments)
-		base = append(base, map[string]any{
-			"role": "tool", "tool_call_id": call.ID, "content": result,
-		})
-	}
-	if content != "" {
-		publishTextChunks(ctx, s, jobID, "delta", cleanDSMLText(content))
-	}
 	if instruction := s.citationInstruction(jobID); instruction != "" {
 		appendCitationInstruction(base, instruction)
 	}
-	return s.streamAgentAnswer(ctx, jobID, p, base, model, effort)
+	return s.runToolLoop(ctx, jobID, p, base, tools, model, effort)
 }
 
 // runToolLoop alternates model turns and tool executions. The model may emit a
@@ -162,9 +101,18 @@ func (s *Server) runToolLoop(ctx context.Context, jobID string, p *relayProvider
 		body["stream"] = false
 		body["tools"] = tools
 		body["tool_choice"] = "auto"
-		resp, status, err := postChatJSON(ctx, p, body)
+		resp, status, rawBody, err := postChatWithFallback(ctx, p, body)
 		if err != nil || status < 200 || status >= 300 {
-			return false
+			if round == 0 && len(seenCalls) == 0 {
+				// The provider rejects tool calling: let the caller use the
+				// server-side research fallback instead of failing the turn.
+				return false
+			}
+			message := upstreamError(status, rawBody)
+			textNow, reasoningNow := textSoFar(messages), ""
+			_ = s.updateRelayJob(jobID, "failed", &textNow, &reasoningNow, message)
+			s.relay.publish(jobID, relayEvent{Type: "error", Status: "failed", Error: message})
+			return true
 		}
 		choice := firstChoice(resp)
 		if choice == nil {
@@ -178,11 +126,21 @@ func (s *Server) runToolLoop(ctx context.Context, jobID string, p *relayProvider
 		}
 		text := cleanDSMLText(content)
 		reasoning := cleanDSMLText(choice.Reasoning)
-		if reasoning != "" {
-			publishTextChunks(ctx, s, jobID, "reasoning", reasoning)
+		repeat := len(calls) > 0
+		for _, call := range calls {
+			sig := call.Function.Name + "\x00" + call.Function.Arguments
+			if !seenCalls[sig] {
+				repeat = false
+			}
+			seenCalls[sig] = true
 		}
-		if text != "" {
-			publishTextChunks(ctx, s, jobID, "delta", text)
+		if !repeat {
+			if reasoning != "" {
+				publishTextChunks(ctx, s, jobID, "reasoning", reasoning)
+			}
+			if text != "" {
+				publishTextChunks(ctx, s, jobID, "delta", text)
+			}
 		}
 		if len(calls) == 0 {
 			textNow := text
@@ -191,20 +149,17 @@ func (s *Server) runToolLoop(ctx context.Context, jobID string, p *relayProvider
 			s.relay.publish(jobID, relayEvent{Type: "status", Status: "completed"})
 			return true
 		}
-		repeat := true
-		for _, call := range calls {
-			sig := call.Function.Name + "\x00" + call.Function.Arguments
-			if !seenCalls[sig] {
-				repeat = false
-			}
-			seenCalls[sig] = true
-		}
 		if repeat {
 			// A provider (or a test double) repeating the same call cannot make
 			// progress; finish through the streaming path instead of looping.
 			return s.streamAgentAnswer(ctx, jobID, p, messages, model, effort)
 		}
-		assistant := map[string]any{"role": "assistant", "content": content}
+		assistant := map[string]any{"role": "assistant"}
+		if strings.TrimSpace(content) != "" {
+			assistant["content"] = content
+		} else {
+			assistant["content"] = nil
+		}
 		payload := make([]map[string]any, 0, len(calls))
 		for _, call := range calls {
 			payload = append(payload, map[string]any{
@@ -217,7 +172,7 @@ func (s *Server) runToolLoop(ctx context.Context, jobID string, p *relayProvider
 		for _, call := range calls {
 			s.relay.publish(jobID, relayEvent{Type: "status", Status: "tools"})
 			result := s.executeToolCall(ctx, jobID, call.ID, call.Function.Name, call.Function.Arguments)
-			messages = append(messages, map[string]any{"role": "tool", "tool_call_id": call.ID, "content": result})
+			messages = append(messages, map[string]any{"role": "tool", "tool_call_id": call.ID, "name": call.Function.Name, "content": result})
 		}
 		if instruction := s.citationInstruction(jobID); instruction != "" {
 			appendCitationInstruction(messages, instruction)
@@ -242,6 +197,18 @@ func appendCitationInstruction(messages []map[string]any, instruction string) {
 		}
 		return
 	}
+}
+
+func textSoFar(messages []map[string]any) string {
+	for i := len(messages) - 1; i >= 0; i-- {
+		if role, _ := messages[i]["role"].(string); role != "assistant" {
+			continue
+		}
+		if content, ok := messages[i]["content"].(string); ok && strings.TrimSpace(content) != "" {
+			return cleanDSMLText(content)
+		}
+	}
+	return ""
 }
 
 func publishTextChunks(ctx context.Context, s *Server, jobID, eventType, text string) {
@@ -603,33 +570,55 @@ func firstChoice(root map[string]any) *agentChoice {
 	return choice
 }
 
-func postChatJSON(ctx context.Context, p *relayProvider, body map[string]any) (map[string]any, int, error) {
+func postChatJSON(ctx context.Context, p *relayProvider, body map[string]any) (map[string]any, int, []byte, error) {
 	raw, err := json.Marshal(body)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, nil, err
 	}
 	endpoint := strings.TrimRight(strings.TrimSpace(p.BaseURL), "/") + "/chat/completions"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(raw))
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+p.APIKey)
 	resp, err := (&http.Client{Timeout: 90 * time.Second}).Do(req)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, nil, err
 	}
 	defer resp.Body.Close()
 	payload, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
 	if err != nil {
-		return nil, resp.StatusCode, err
+		return nil, resp.StatusCode, nil, err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, resp.StatusCode, fmt.Errorf("upstream status %d", resp.StatusCode)
+		return nil, resp.StatusCode, payload, fmt.Errorf("upstream status %d", resp.StatusCode)
 	}
 	var root map[string]any
 	if err := json.Unmarshal(payload, &root); err != nil {
-		return nil, resp.StatusCode, err
+		return nil, resp.StatusCode, payload, err
 	}
-	return root, resp.StatusCode, nil
+	return root, resp.StatusCode, payload, nil
 }
+
+// postChatWithFallback retries once with a minimal body. Strict providers reject
+// otherwise valid tool conversations when optional sampling fields are present.
+func postChatWithFallback(ctx context.Context, p *relayProvider, base map[string]any) (map[string]any, int, []byte, error) {
+	resp, status, raw, err := postChatJSON(ctx, p, base)
+	if err == nil || status < 400 || status >= 500 {
+		return resp, status, raw, err
+	}
+	trimmed := make(map[string]any, len(base))
+	for key, value := range base {
+		trimmed[key] = value
+	}
+	delete(trimmed, "reasoning_effort")
+	delete(trimmed, "temperature")
+	reduced, status2, raw2, err2 := postChatJSON(ctx, p, trimmed)
+	if err2 == nil {
+		return reduced, status2, raw2, nil
+	}
+	return nil, status2, raw2, err2
+}
+
+func unreachable() {}
