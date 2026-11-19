@@ -114,10 +114,11 @@ func (h *relayHub) removeCancel(jobID string) {
 }
 
 type RelayProviderDTO struct {
-	ID       string `json:"id"`
-	Name     string `json:"name"`
-	Protocol string `json:"protocol"`
-	Model    string `json:"model"`
+	ID       string          `json:"id"`
+	Name     string          `json:"name"`
+	Protocol string          `json:"protocol"`
+	Model    string          `json:"model"`
+	Models   []ProviderModel `json:"models,omitempty"`
 }
 
 func (s *Server) handleRelayProviders(w http.ResponseWriter, r *http.Request) {
@@ -143,6 +144,8 @@ func (s *Server) handleRelayProviders(w http.ResponseWriter, r *http.Request) {
 			s.internalError(w, r, err)
 			return
 		}
+		item.Models = decodeProviderModels(item.Model)
+		item.Model = modelIDs(item.Models)
 		items = append(items, item)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"providers": items})
@@ -332,6 +335,7 @@ func (s *Server) handleRelayEvents(w http.ResponseWriter, r *http.Request, user 
 
 type relayProvider struct {
 	ID, Protocol, BaseURL, APIKey, Model, SystemPrompt string
+	Models                                             []ProviderModel
 	Temperature                                        *float64
 	MaxTokens                                          *int
 }
@@ -353,6 +357,8 @@ func (s *Server) loadRelayProvider(ctx context.Context, userID int64, providerID
 		return nil, err
 	}
 	p.APIKey = string(key)
+	p.Models = decodeProviderModels(p.Model)
+	p.Model = modelIDs(p.Models)
 	if temp.Valid {
 		v := temp.Float64
 		p.Temperature = &v

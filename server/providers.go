@@ -2,6 +2,7 @@ package main
 
 import (
 	"database/sql"
+	"encoding/json"
 	"math"
 	"net/http"
 	"net/url"
@@ -9,6 +10,47 @@ import (
 	"unicode"
 	"unicode/utf8"
 )
+
+func decodeProviderModels(raw string) []ProviderModel {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	if strings.HasPrefix(raw, "[") {
+		var models []ProviderModel
+		if json.Unmarshal([]byte(raw), &models) == nil {
+			return models
+		}
+	}
+	models := make([]ProviderModel, 0)
+	for _, id := range strings.Split(raw, ",") {
+		if id = strings.TrimSpace(id); id != "" {
+			models = append(models, ProviderModel{ID: id, Name: id})
+		}
+	}
+	return models
+}
+
+func modelIDs(models []ProviderModel) string {
+	ids := make([]string, 0, len(models))
+	for _, m := range models {
+		if strings.TrimSpace(m.ID) != "" {
+			ids = append(ids, strings.TrimSpace(m.ID))
+		}
+	}
+	return strings.Join(ids, ",")
+}
+
+func encodeProviderModels(models []ProviderModel) string {
+	if len(models) == 0 {
+		return ""
+	}
+	raw, err := json.Marshal(models)
+	if err != nil {
+		return modelIDs(models)
+	}
+	return string(raw)
+}
 
 func (s *Server) handleListProviders(w http.ResponseWriter, r *http.Request) {
 	user, ok := s.requireAuth(w, r)
@@ -41,6 +83,8 @@ func (s *Server) handleListProviders(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		p.APIKey = string(key)
+		p.Models = decodeProviderModels(p.Model)
+		p.Model = modelIDs(p.Models)
 		if temperature.Valid {
 			v := temperature.Float64
 			p.Temperature = &v
@@ -95,6 +139,9 @@ func (s *Server) putProvider(w http.ResponseWriter, r *http.Request, user *authU
 	if e := validateProvider(&provider); e != nil {
 		writeRequestError(w, e)
 		return
+	}
+	if len(provider.Models) > 0 {
+		provider.Model = encodeProviderModels(provider.Models)
 	}
 
 	encryptedKey, err := s.aead.seal([]byte(provider.APIKey), providerAAD(user.ID, provider.ID))
@@ -183,8 +230,19 @@ func validateProvider(p *ProviderDTO) *apiError {
 	if len(p.APIKey) > 8192 {
 		return invalidField("apiKey", "apiKey must be at most 8192 bytes")
 	}
-	if utf8.RuneCountInString(p.Model) > 200 {
-		return invalidField("model", "model must be at most 200 characters")
+	if utf8.RuneCountInString(p.Model) > 200_000 {
+		return invalidField("model", "model list is too large")
+	}
+	for _, m := range p.Models {
+		if strings.TrimSpace(m.ID) == "" {
+			return invalidField("models", "model id must not be empty")
+		}
+		if len(m.ID) > 200 || len(m.Name) > 200 {
+			return invalidField("models", "model id or name is too long")
+		}
+		if m.ContextWindow < 0 || m.MaxOutputTokens < 0 {
+			return invalidField("models", "model limits must not be negative")
+		}
 	}
 	if len(p.SystemPrompt) > 100_000 {
 		return invalidField("systemPrompt", "systemPrompt must be at most 100000 bytes")

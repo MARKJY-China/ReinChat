@@ -273,6 +273,17 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if path == "/api/v1/provider-models" {
+		s.handleProviderModelsFetch(w, r)
+		return
+	}
+	if rest, ok := strings.CutPrefix(path, "/api/v1/providers/"); ok && strings.HasSuffix(rest, "/models") {
+		id := strings.TrimSuffix(rest, "/models")
+		if id != "" && !strings.Contains(id, "/") {
+			s.handleProviderModels(w, r, id)
+			return
+		}
+	}
 	if id, ok := pathValue(path, "/api/v1/providers/"); ok {
 		s.handleProviderItem(w, r, id)
 		return

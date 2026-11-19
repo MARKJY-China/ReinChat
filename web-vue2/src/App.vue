@@ -40,6 +40,7 @@
         <div class="crumb"><span class="crumb-root">ReinChat</span><span class="crumb-sep">/</span><span>{{ active ? (active.title || '新会话') : '新会话' }}</span></div>
         <div class="top-actions">
           <span class="sync-dot" title="实时同步"></span>
+          <button class="icon-btn" title="界面设置" @click="settingsOpen = true">⚙</button>
           <button class="icon-btn theme-toggle" :title="dark ? '切换浅色' : '切换暗色'" @click="toggleTheme">{{ dark ? '☀' : '☾' }}</button>
           <button class="quiet-btn small" @click="refresh">刷新</button>
         </div>
@@ -71,6 +72,23 @@
         @update:search="search = $event" @update:draft="draft = $event" @send="send" @stop="stopGeneration" />
     </main>
 
+    <div v-if="settingsOpen" class="modal-mask" @click.self="settingsOpen = false">
+      <div class="modal-card settings-card">
+        <div class="modal-head"><div><h2>界面设置</h2><p class="muted">只影响当前浏览器</p></div><button class="icon-btn" @click="settingsOpen = false">×</button></div>
+        <div class="setting-row">
+          <div><strong>字体大小</strong><p class="muted">整个界面的缩放比例</p></div>
+          <span class="setting-value">{{ Math.round(fontScale * 100) }}%</span>
+        </div>
+        <input class="scale-range" type="range" min="0.85" max="1.25" step="0.05" v-model.number="fontScale" @input="applyFontScale">
+        <div class="scale-labels"><span>小</span><span>标准</span><span>大</span></div>
+        <div class="setting-row theme-row">
+          <div><strong>主题</strong><p class="muted">跟随系统或手动选择</p></div>
+          <button class="quiet-btn small" @click="toggleTheme">{{ dark ? '切换到浅色' : '切换到暗色' }}</button>
+        </div>
+        <div class="modal-actions"><button class="quiet-btn" @click="resetFontScale">恢复标准</button><button class="primary-btn" @click="settingsOpen = false">完成</button></div>
+      </div>
+    </div>
+
     <div v-if="providerModal" class="modal-mask" @click.self="providerModal = false">
       <div class="modal-card">
         <div class="modal-head">
@@ -100,7 +118,17 @@
             </label>
             <label class="field wide">Base URL<input v-model.trim="providerDraft.baseUrl" placeholder="https://api.deepseek.com/v1"></label>
             <label class="field wide">API Key<input v-model.trim="providerDraft.apiKey" type="password"></label>
-            <label class="field wide">模型（逗号分隔）<input v-model.trim="providerDraft.model" placeholder="deepseek-chat"></label>
+            <div class="model-manager wide">
+              <div class="model-manager-head"><span>模型目录</span><button class="quiet-btn small" :disabled="providerModelsLoading" @click="fetchProviderModels">{{ providerModelsLoading ? '获取中…' : '获取可用模型' }}</button></div>
+              <div class="model-row" v-for="(m, index) in providerDraft.models" :key="index">
+                <input v-model.trim="m.id" placeholder="模型 ID">
+                <input v-model.trim="m.name" placeholder="显示名称">
+                <input v-model.number="m.contextWindow" type="number" placeholder="上下文">
+                <input v-model.number="m.maxOutputTokens" type="number" placeholder="最大输出">
+                <button class="icon-btn" title="删除模型" @click="providerDraft.models.splice(index, 1)">×</button>
+              </div>
+              <button class="quiet-btn small add-model" @click="providerDraft.models.push({ id: '', name: '', contextWindow: 0, maxOutputTokens: 0 })">＋ 添加模型</button>
+            </div>
             <label class="field wide">系统提示词<textarea v-model="providerDraft.systemPrompt" rows="3"></textarea></label>
           </div>
           <p class="auth-error" v-if="providerError">{{ providerError }}</p>
@@ -139,6 +167,8 @@ export default {
       dark: localStorage.getItem('reinchat_theme') === 'dark' || (localStorage.getItem('reinchat_theme') !== 'light' && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches),
       conversationCache: {}, streams: {}, applyingSettings: false, settingsTimer: null,
       providerModal: false, providerDraft: null, providerBusy: false, providerError: '',
+      providerModelsLoading: false, settingsOpen: false,
+      fontScale: Number(localStorage.getItem('reinchat_font_scale') || 1),
     };
   },
   computed: {
@@ -148,6 +178,9 @@ export default {
     providerOptions() { return this.providers.map((p) => ({ value: p.id, label: p.name })); },
     modelOptions() {
       const provider = this.providers.find((p) => p.id === this.providerId);
+      if (provider && provider.models && provider.models.length) {
+        return provider.models.filter((m) => m.id).map((m) => ({ value: m.id, label: m.name || m.id }));
+      }
       return ((provider && provider.model) || '').split(',').map((m) => m.trim()).filter(Boolean).map((m) => ({ value: m, label: m }));
     },
     reasoningOptions() {
@@ -157,7 +190,9 @@ export default {
   watch: {
     providerId() {
       const provider = this.providers.find((p) => p.id === this.providerId);
-      const first = ((provider && provider.model) || '').split(',')[0].trim();
+      const first = provider && provider.models && provider.models.length
+        ? provider.models[0].id
+        : ((provider && provider.model) || '').split(',')[0].trim();
       if (first && !this.modelOptions.some((m) => m.value === this.model)) this.model = first;
       if (!this.applyingSettings) this.scheduleSettings();
     },
@@ -167,6 +202,7 @@ export default {
   },
   async mounted() {
     this.applyTheme();
+    this.applyFontScale();
     await this.waitForFonts();
     if (this.token) await this.refresh();
     this.booting = false;
@@ -214,8 +250,9 @@ export default {
     setProvider(id) {
       this.providerId = id;
       const provider = this.providers.find((p) => p.id === id);
-      const first = ((provider && provider.model) || '').split(',')[0].trim();
-      this.model = first;
+      this.model = provider && provider.models && provider.models.length
+        ? provider.models[0].id
+        : ((provider && provider.model) || '').split(',')[0].trim();
     },
     applySettings(conversation) {
       const settings = conversation && conversation.settings;
@@ -235,17 +272,42 @@ export default {
     },
     openProviderManager() { this.providerModal = true; this.providerDraft = null; this.providerError = ''; this.refresh(); },
     newProvider() {
-      this.providerDraft = { id: uuid(), name: '', protocol: 'CHAT_COMPLETIONS', baseUrl: '', apiKey: '', model: '', systemPrompt: '' };
+      this.providerDraft = { id: uuid(), name: '', protocol: 'CHAT_COMPLETIONS', baseUrl: '', apiKey: '', model: '', models: [], systemPrompt: '' };
       this.providerError = '';
     },
-    editProvider(p) { this.providerDraft = { ...p }; this.providerError = ''; },
+    editProvider(p) {
+      const models = p.models && p.models.length
+        ? p.models.map((m) => ({ ...m }))
+        : (p.model || '').split(',').filter(Boolean).map((id) => ({ id: id.trim(), name: id.trim(), contextWindow: 0, maxOutputTokens: 0 }));
+      this.providerDraft = { ...p, models };
+      this.providerError = '';
+    },
+    async fetchProviderModels() {
+      if (!this.providerDraft || this.providerModelsLoading) return;
+      this.providerModelsLoading = true; this.providerError = '';
+      try {
+        const data = await this.api.request('/v1/provider-models', {
+          method: 'POST',
+          body: { baseUrl: this.providerDraft.baseUrl, apiKey: this.providerDraft.apiKey || '' },
+        });
+        const existing = new Set((this.providerDraft.models || []).map((m) => m.id));
+        for (const model of data.models || []) {
+          if (!existing.has(model.id)) this.providerDraft.models.push({ id: model.id, name: model.name || model.id, contextWindow: 0, maxOutputTokens: 0 });
+        }
+      } catch (e) { this.providerError = e.message; } finally { this.providerModelsLoading = false; }
+    },
     async saveProvider() {
       if (!this.providerDraft || this.providerBusy) return;
       const p = this.providerDraft;
-      if (!p.name.trim() || !p.baseUrl.trim() || !p.model.trim()) { this.providerError = '名称、Base URL、模型不能为空'; return; }
+      p.models = (p.models || []).filter((m) => m.id.trim()).map((m) => ({ ...m, id: m.id.trim(), name: (m.name || m.id).trim() }));
+      if (!p.name.trim() || !p.baseUrl.trim() || !p.models.length) { this.providerError = '名称、Base URL、至少一个模型不能为空'; return; }
       this.providerBusy = true; this.providerError = '';
       try {
-        await this.api.putProvider({ id: p.id, name: p.name.trim(), protocol: p.protocol, baseUrl: p.baseUrl.trim(), apiKey: p.apiKey || '', model: p.model.trim(), systemPrompt: p.systemPrompt || '', temperature: null, maxTokens: null });
+        await this.api.putProvider({
+          id: p.id, name: p.name.trim(), protocol: p.protocol, baseUrl: p.baseUrl.trim(), apiKey: p.apiKey || '',
+          model: p.models.map((m) => m.id).join(','), models: p.models,
+          systemPrompt: p.systemPrompt || '', temperature: null, maxTokens: null,
+        });
         this.providerDraft = null;
         await this.refresh();
       } catch (e) { this.providerError = e.message; } finally { this.providerBusy = false; }
@@ -262,6 +324,11 @@ export default {
       ]).catch(() => {});
     },
     applyTheme() { document.documentElement.classList.toggle('dark', this.dark); },
+    applyFontScale() {
+      document.documentElement.style.setProperty('--ui-scale', String(this.fontScale));
+      localStorage.setItem('reinchat_font_scale', String(this.fontScale));
+    },
+    resetFontScale() { this.fontScale = 1; this.applyFontScale(); },
     toggleTheme() {
       this.dark = !this.dark;
       localStorage.setItem('reinchat_theme', this.dark ? 'dark' : 'light');
