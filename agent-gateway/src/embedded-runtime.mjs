@@ -68,6 +68,7 @@ class OpenAiAdapter extends LlmAdapter {
     let index = -1;
     let kind = 'text';
     let text = '';
+    let finished = false;
     const close = () => {
       if (index < 0) return null;
       const closingIndex = index;
@@ -86,7 +87,11 @@ class OpenAiAdapter extends LlmAdapter {
         buffer = buffer.slice(cut + 1);
         if (!line.startsWith('data:')) continue;
         const data = line.slice(5).trim();
-        if (!data || data === '[DONE]') continue;
+        if (!data) continue;
+        if (data === '[DONE]') {
+          finished = true;
+          break;
+        }
         const payload = JSON.parse(data);
         const choice = payload.choices?.[0];
         const delta = choice?.delta || {};
@@ -124,8 +129,11 @@ class OpenAiAdapter extends LlmAdapter {
           const end = close();
           if (end) yield end;
           yield { type: 'finish', reason: { kind: choice.finish_reason === 'length' ? 'max-tokens' : choice.finish_reason === 'tool_calls' ? 'tool-calls' : 'stop' } };
+          finished = true;
+          break;
         }
       }
+      if (finished) break;
     }
     const end = close();
     if (end) yield end;
