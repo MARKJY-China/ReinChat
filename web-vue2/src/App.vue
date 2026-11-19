@@ -193,6 +193,7 @@ export default {
   },
   computed: {
     api() { return new Api(this.server, this.token); },
+    webBase() { return window.location.pathname.startsWith('/v2/') ? '/v2/' : '/'; },
     sending() { return !!(this.activeId && this.streams[this.activeId]); },
     streamPhase() { return (this.activeId && this.streams[this.activeId] && this.streams[this.activeId].phase) || ''; },
     providerOptions() { return this.providers.map((p) => ({ value: p.id, label: p.name })); },
@@ -231,15 +232,18 @@ export default {
     this.applyTheme();
     this.applyFontScale();
     document.addEventListener('click', this.closeConvMenu);
+    window.addEventListener('popstate', this.openFromLocation);
     await this.waitForFonts();
     if (this.token) {
       await this.refresh();
-      const match = window.location.hash.match(/conversation=([^&]+)/);
-      if (match) this.openConversation(decodeURIComponent(match[1]));
+      await this.openFromLocation();
     }
     this.booting = false;
   },
-  beforeDestroy() { document.removeEventListener('click', this.closeConvMenu); },
+  beforeDestroy() {
+    document.removeEventListener('click', this.closeConvMenu);
+    window.removeEventListener('popstate', this.openFromLocation);
+  },
   methods: {
     async login(payload) {
       this.busy = true; this.authError = '';
@@ -249,9 +253,14 @@ export default {
         this.token = data.token; this.user = data.user.username; this.server = payload.server; this.level = data.user.level || 1;
         localStorage.setItem(TOKEN, this.token); localStorage.setItem(USER, this.user); localStorage.setItem(SERVER, this.server);
         await this.refresh();
+        await this.openFromLocation();
       } catch (e) { this.authError = e.message; } finally { this.busy = false; }
     },
-    logout() { localStorage.removeItem(TOKEN); localStorage.removeItem(USER); localStorage.removeItem(SERVER); this.token = ''; this.user = ''; this.active = null; this.conversations = []; },
+    logout() {
+      localStorage.removeItem(TOKEN); localStorage.removeItem(USER); localStorage.removeItem(SERVER);
+      this.token = ''; this.user = ''; this.active = null; this.activeId = ''; this.conversations = [];
+      if (window.location.pathname !== this.webBase) window.history.pushState({}, '', this.webBase);
+    },
     async refresh() {
       try {
         const [list, account, providers] = await Promise.all([this.api.conversations(), this.api.account(), this.api.relayProviders()]);
@@ -264,6 +273,27 @@ export default {
         if (this.activeId) await this.openConversation(this.activeId);
       } catch (e) { this.authError = e.message; }
     },
+    conversationIdFromPath() {
+      const path = window.location.pathname;
+      if (!path.startsWith(this.webBase) || path === this.webBase) return '';
+      let rest = path.slice(this.webBase.length).replace(/\/+$/, '');
+      if (!rest || rest === 'index.html' || rest.includes('/') || rest.includes('.')) return '';
+      try { return decodeURIComponent(rest); } catch (e) { return ''; }
+    },
+    async openFromLocation() {
+      const pathId = this.conversationIdFromPath();
+      const hash = window.location.hash.match(/conversation=([^&]+)/);
+      const id = pathId || (hash ? decodeURIComponent(hash[1]) : '');
+      if (!id) { this.active = null; this.activeId = ''; return; }
+      if (id === this.activeId) return;
+      await this.openConversation(id);
+    },
+    setConversationUrl(id) {
+      const target = this.webBase + encodeURIComponent(id);
+      if (window.location.pathname !== target) {
+        window.history.pushState({ conversationId: id }, '', target);
+      }
+    },
     async openConversation(id) {
       this.activeId = id;
       this.railOpen = false;
@@ -271,6 +301,7 @@ export default {
       if (cached && this.streams[id]) {
         this.active = cached;
         this.applySettings(cached);
+        this.setConversationUrl(id);
         return;
       }
       try {
@@ -278,6 +309,7 @@ export default {
         this.$set(this.conversationCache, id, data);
         this.active = data;
         this.applySettings(data);
+        this.setConversationUrl(id);
       } catch (e) { this.authError = e.message; }
     },
     openConvMenu(conversation, event) {
@@ -318,7 +350,7 @@ export default {
     },
     async shareConversation(conversation) {
       this.convMenu = null;
-      const url = this.server.replace(/\/+$/, '') + '/v2/#conversation=' + encodeURIComponent(conversation.id);
+      const url = this.server.replace(/\/+$/, '') + this.webBase + encodeURIComponent(conversation.id);
       if (navigator.share) {
         try { await navigator.share({ title: conversation.title || 'ReinChat', text: conversation.title || 'ReinChat 会话', url }); return; } catch (e) { /* fall through */ }
       }
@@ -340,7 +372,10 @@ export default {
       try {
         await this.api.deleteConversation(conversation.id);
         this.conversations = this.conversations.filter((c) => c.id !== conversation.id);
-        if (this.activeId === conversation.id) { this.active = null; this.activeId = ''; }
+        if (this.activeId === conversation.id) {
+          this.active = null; this.activeId = '';
+          if (window.location.pathname !== this.webBase) window.history.pushState({}, '', this.webBase);
+        }
       } catch (e) { this.authError = e.message; }
     },
     async deleteSelected() {
@@ -348,7 +383,10 @@ export default {
       try {
         await Promise.all(this.selectedIds.map((id) => this.api.deleteConversation(id)));
         this.conversations = this.conversations.filter((c) => !this.selectedIds.includes(c.id));
-        if (this.selectedIds.includes(this.activeId)) { this.active = null; this.activeId = ''; }
+        if (this.selectedIds.includes(this.activeId)) {
+          this.active = null; this.activeId = '';
+          if (window.location.pathname !== this.webBase) window.history.pushState({}, '', this.webBase);
+        }
         this.selectedIds = []; this.selectionMode = false;
       } catch (e) { this.authError = e.message; }
     },
@@ -446,6 +484,7 @@ export default {
     },
     newConversation() {
       this.railOpen = false;
+      if (window.location.pathname !== this.webBase) window.history.pushState({}, '', this.webBase);
       const now = Date.now();
       this.active = { id: uuid(), title: '新会话', createdAt: now, updatedAt: now, version: 0, messages: [], settings: { providerId: this.providerId, model: this.model, reasoningEffort: this.reasoningEffort, search: this.search } };
       this.activeId = this.active.id; this.draft = '';
@@ -636,7 +675,7 @@ export default {
         c.createdAt = saved.createdAt;
         c.updatedAt = saved.updatedAt;
         this.$set(this.conversationCache, saved.id, saved);
-        if (this.activeId === saved.id) this.active = saved;
+        if (this.activeId === saved.id) { this.active = saved; this.setConversationUrl(saved.id); }
         await this.refresh();
       } catch (e) { this.authError = e.message; }
     },
