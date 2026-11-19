@@ -596,7 +596,7 @@ export default {
       this.$set(this.conversationCache, conversation.id, conversation);
       const now = Date.now();
       if (!retry) conversation.messages.push({ id: uuid(), role: 'user', content: text, pdfName: pdf ? pdf.name : '', pdfText: pdf ? pdf.text : '', images: images || [], createdAt: now, status: 'COMPLETE', error: null });
-      const assistant = { id: uuid(), role: 'assistant', content: '', reasoning: '', segments: [], model: this.model, toolCalls: [], images: [], createdAt: now + 1, status: 'COMPLETE', error: null, streaming: true };
+      const assistant = { id: uuid(), role: 'assistant', content: '', reasoning: '', segments: [], sources: [], model: this.model, toolCalls: [], images: [], createdAt: now + 1, status: 'COMPLETE', error: null, streaming: true };
       conversation.messages.push(assistant);
       this.followBottom = true;
       this.scrollThreadToBottom();
@@ -656,25 +656,90 @@ export default {
       if (!text) return;
       const segments = (assistant.segments || []).slice();
       const last = segments[segments.length - 1];
-      if (last && last.type === 'reasoning') last.text += text;
-      else segments.push({ type: 'reasoning', text });
+      if (last && last.type === 'reasoning') {
+        segments[segments.length - 1] = { ...last, text: (last.text || '') + text };
+      } else {
+        segments.push({ type: 'reasoning', text, status: 'done' });
+      }
       this.$set(assistant, 'segments', segments);
       assistant.reasoning = (assistant.reasoning || '') + text;
       if (this.followBottom) this.scrollThreadToBottom();
     },
-    upsertTool(assistant, name, status, detail) {
+    toolLabel(name, status) {
+      const running = !status || status === 'running';
+      if (name === 'web_search') return running ? '正在搜索网页' : '搜索网页';
+      if (name === 'fetch_url') return running ? '正在浏览网页' : '浏览网页';
+      return name || (running ? '正在使用工具' : '使用工具');
+    },
+    upsertTool(assistant, event) {
       const segments = (assistant.segments || []).slice();
-      const label = name === 'web_search' ? '正在搜索网页' : name === 'fetch_url' ? '正在浏览网页' : '正在使用工具';
-      let segment = segments.slice().reverse().find((s) => s.type === 'tool' && s.name === name && s.status === 'running');
-      if (!segment) {
-        segment = { type: 'tool', name, label, status: 'running', detail: '' };
-        segments.push(segment);
+      const name = String(event.tool || event.name || 'tool');
+      const status = event.status || 'running';
+      const callId = String(event.callId || '');
+      const label = this.toolLabel(name, status);
+      let index = -1;
+      for (let i = segments.length - 1; i >= 0; i--) {
+        const segment = segments[i];
+        if (segment.type !== 'tool') continue;
+        if (callId && segment.callId === callId) { index = i; break; }
+        if (!callId && segment.name === name && segment.status === 'running') { index = i; break; }
       }
-      segment.status = status;
-      if (detail) segment.detail = String(detail).slice(0, 4000);
-      if (status === 'done') segment.label = name === 'web_search' ? '搜索网页' : name === 'fetch_url' ? '浏览网页' : name;
+      if (index < 0) {
+        const segment = {
+          type: 'tool', name, callId, label, status,
+          query: event.query || '', url: event.url || '', summary: event.summary || '', detail: '',
+        };
+        if (event.detail) segment.detail = String(event.detail).slice(0, 4000);
+        segments.push(segment);
+      } else {
+        const previous = segments[index];
+        const segment = {
+          ...previous,
+          callId: callId || previous.callId || '',
+          label,
+          status,
+          query: event.query || previous.query || '',
+          url: event.url || previous.url || '',
+          summary: event.summary || previous.summary || '',
+        };
+        if (event.detail) segment.detail = String(event.detail).slice(0, 4000);
+        segments[index] = segment;
+      }
       this.$set(assistant, 'segments', segments);
       if (this.followBottom) this.scrollThreadToBottom();
+    },
+    finalizeTools(assistant, failed) {
+      const segments = (assistant.segments || []).slice();
+      let changed = false;
+      for (let i = 0; i < segments.length; i++) {
+        const segment = segments[i];
+        if (segment.type === 'tool' && segment.status === 'running') {
+          const status = failed ? 'failed' : 'done';
+          segments[i] = { ...segment, status, label: this.toolLabel(segment.name, status) };
+          changed = true;
+        }
+      }
+      if (changed) this.$set(assistant, 'segments', segments);
+    },
+    mergeSources(assistant, incoming) {
+      if (!Array.isArray(incoming) || !incoming.length) return;
+      const byUrl = new Map();
+      (assistant.sources || []).forEach((source) => {
+        if (source && source.url) byUrl.set(source.url, source);
+      });
+      incoming.forEach((source, position) => {
+        if (!source || !/^https?:\/\//i.test(String(source.url || ''))) return;
+        if (byUrl.has(source.url)) return;
+        const parsed = Number(source.index);
+        byUrl.set(source.url, {
+          index: Number.isFinite(parsed) && parsed > 0 ? Math.trunc(parsed) : byUrl.size + 1,
+          title: source.title || source.url,
+          url: source.url,
+          snippet: source.snippet || '',
+        });
+      });
+      const list = [...byUrl.values()].sort((a, b) => (a.index || 0) - (b.index || 0));
+      this.$set(assistant, 'sources', list);
     },
     async responseError(res, label) {
       const raw = await res.text();
@@ -700,6 +765,7 @@ export default {
       const res = await fetch(this.api.base() + '/v1/relay/jobs/' + encodeURIComponent(job.id) + '/events', { headers: { Authorization: 'Bearer ' + this.token }, signal: stream.controller.signal });
       if (!res.ok) throw await this.responseError(res, 'relay');
       const reader = res.body.getReader(); const decoder = new TextDecoder(); let buffer = '';
+      let lastSeq = 0;
       while (true) {
         const part = await reader.read(); if (part.done) break;
         buffer += decoder.decode(part.value, { stream: true });
@@ -708,25 +774,56 @@ export default {
           const block = buffer.slice(0, cut); buffer = buffer.slice(cut + 2);
           const data = block.split('\n').filter((l) => l.startsWith('data:')).map((l) => l.slice(5).trim()).join('');
           if (!data) continue;
-          const event = JSON.parse(data);
+          let event;
+          try { event = JSON.parse(data); } catch (e) { continue; }
+          if (event.seq) {
+            if (event.seq <= lastSeq) continue;
+            lastSeq = event.seq;
+          }
           if (event.type === 'snapshot') {
-            if (Array.isArray(event.tools)) {
-              event.tools.forEach((tool) => this.upsertTool(assistant, tool.tool || '', tool.status || 'running', tool.detail));
+            // The snapshot is the authoritative timeline for a reconnect: it
+            // carries the ordered segments plus the complete tool history.
+            if (Array.isArray(event.segments) && event.segments.length) {
+              this.$set(assistant, 'segments', event.segments.map((segment) => ({ ...segment })));
+            } else if (Array.isArray(event.tools)) {
+              event.tools.forEach((tool) => this.upsertTool(assistant, tool));
+            }
+            if (event.reasoning) {
+              const hasReasoning = (assistant.segments || []).some((segment) => segment.type === 'reasoning');
+              if (hasReasoning) {
+                const fromSegments = (assistant.segments || [])
+                  .filter((segment) => segment.type === 'reasoning')
+                  .map((segment) => segment.text || '')
+                  .join('');
+                assistant.reasoning = fromSegments || event.reasoning;
+              } else {
+                assistant.reasoning = '';
+                this.appendReasoning(assistant, event.reasoning);
+              }
             }
             if (event.text) { assistant.content = event.text; stream.phase = 'streaming'; }
-            if (event.reasoning && (!assistant.segments || !assistant.segments.length)) this.appendReasoning(assistant, event.reasoning);
-            if (event.error) throw new Error(String(event.error).slice(0, 4000));
+            this.mergeSources(assistant, event.sources);
+            if (event.status === 'failed') throw new Error(String(event.error || '生成失败').slice(0, 4000));
+            if (event.status === 'cancelled') throw new Error('生成已取消');
+            if (event.status === 'completed') { this.finalizeTools(assistant, false); return; }
+            continue;
           }
           if (event.type === 'delta') { assistant.content += event.text || ''; stream.phase = 'streaming'; }
           if (event.type === 'reasoning') { this.appendReasoning(assistant, event.text || ''); stream.phase = 'streaming'; }
-          if (event.type === 'tool') { this.upsertTool(assistant, event.tool || '', event.status || 'running', event.detail); }
+          if (event.type === 'tool') { this.upsertTool(assistant, event); this.mergeSources(assistant, event.sources); }
+          if (event.type === 'sources') { this.mergeSources(assistant, event.sources); }
           if (event.type === 'error') throw new Error((event.error || 'relay failed') + (event.status ? '（' + event.status + '）' : ''));
           if (event.type === 'status' && (event.status === 'failed' || event.status === 'cancelled')) {
+            this.finalizeTools(assistant, true);
             throw new Error(event.error || (event.status === 'cancelled' ? '生成已取消' : '生成失败'));
           }
-          if (event.type === 'status' && event.status === 'completed') return;
+          if (event.type === 'status' && event.status === 'completed') {
+            this.finalizeTools(assistant, false);
+            return;
+          }
         }
       }
+      this.finalizeTools(assistant, false);
       if (!assistant.content) throw new Error('连接已中断，未收到模型输出');
     },
     async streamDsh(conversation, assistant, text, stream, pdf) {
@@ -751,10 +848,13 @@ export default {
           }
           if (name === 'event' && event.type === 'tool/call') {
             (assistant.toolCalls = assistant.toolCalls || []).push({ callId: String(event.data?.callId || ''), name: String(event.data?.name || 'tool'), status: 'running' });
-            this.upsertTool(assistant, String(event.data?.name || 'tool'), 'running', '');
+            this.upsertTool(assistant, { tool: String(event.data?.name || 'tool'), status: 'running', callId: String(event.data?.callId || '') });
           }
           if (name === 'event' && event.type === 'tool/result') {
-            this.upsertTool(assistant, String(event.data?.name || 'tool'), 'done', (event.data?.message?.content || []).map((b) => b.text || '').join(''));
+            this.upsertTool(assistant, {
+              tool: String(event.data?.name || 'tool'), status: 'done', callId: String(event.data?.callId || ''),
+              detail: (event.data?.message?.content || []).map((b) => b.text || '').join(''),
+            });
           }
           if (name === 'done') return;
           if (name === 'error') throw new Error((event.message || 'DSH failed') + (event.stderr ? '\n' + String(event.stderr).slice(-2000) : ''));
@@ -765,7 +865,7 @@ export default {
       const c = target || this.active;
       if (!c) return;
       const settings = c.settings || { providerId: this.providerId, model: this.model, reasoningEffort: this.reasoningEffort, search: this.search };
-      const body = { title: c.title || '新会话', createdAt: c.createdAt, updatedAt: Date.now(), messages: c.messages.map((m) => ({ id: m.id, role: m.role, content: m.content || '', reasoning: m.reasoning || '', segments: m.segments || [], pdfName: m.pdfName || '', pdfText: m.pdfText || '', model: m.model || '', images: (m.images || []).map((img) => ({ id: img.id, remoteId: img.remoteId, mimeType: img.mimeType, width: img.width, height: img.height })), createdAt: m.createdAt, status: m.status || 'COMPLETE', error: m.error || null })), settings };
+      const body = { title: c.title || '新会话', createdAt: c.createdAt, updatedAt: Date.now(), messages: c.messages.map((m) => ({ id: m.id, role: m.role, content: m.content || '', reasoning: m.reasoning || '', segments: m.segments || [], sources: m.sources || [], pdfName: m.pdfName || '', pdfText: m.pdfText || '', model: m.model || '', images: (m.images || []).map((img) => ({ id: img.id, remoteId: img.remoteId, mimeType: img.mimeType, width: img.width, height: img.height })), createdAt: m.createdAt, status: m.status || 'COMPLETE', error: m.error || null })), settings };
       try {
         const saved = !c.version
           ? await this.api.createConversation({ id: c.id, ...body })

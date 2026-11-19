@@ -22,9 +22,12 @@
         </div>
         <div v-else class="tool-card" :class="segment.status">
           <span class="tool-dot"></span>
-          <span>{{ segment.label }}</span>
-          <span class="tool-state">{{ segment.status === 'running' ? '进行中' : (segment.status === 'failed' ? '失败' : '完成') }}</span>
-          <details v-if="segment.detail"><summary>结果</summary><pre>{{ segment.detail }}</pre></details>
+          <span class="tool-name">{{ segment.label || segment.name || '工具' }}</span>
+          <span class="tool-query" v-if="segment.query">“{{ segment.query }}”</span>
+          <a class="tool-url" v-if="segment.url" :href="segment.url" target="_blank" rel="noopener noreferrer" :title="segment.url" @click.stop>{{ host(segment.url) }}</a>
+          <span class="tool-state">{{ toolState(segment.status) }}</span>
+          <span class="tool-summary" v-if="segment.summary">{{ segment.summary }}</span>
+          <details class="tool-detail" v-if="segment.detail"><summary>结果</summary><pre>{{ segment.detail }}</pre></details>
         </div>
       </template>
     </div>
@@ -33,6 +36,18 @@
       <pre>{{ message.reasoning }}</pre>
     </details>
     <div class="prose" v-html="html"></div>
+    <details class="sources" v-if="sources.length">
+      <summary><span>参考来源</span><span class="source-count">{{ sources.length }}</span></summary>
+      <ol class="source-list">
+        <li v-for="source in sources" :key="source.url">
+          <span class="source-index">{{ source.index }}</span>
+          <span class="source-body">
+            <a :href="source.url" target="_blank" rel="noopener noreferrer" :title="source.title || source.url">{{ source.title || host(source.url) }}</a>
+            <span class="source-host">{{ host(source.url) }}</span>
+          </span>
+        </li>
+      </ol>
+    </details>
     <div class="stream-line" v-if="message.streaming"><span></span>{{ streamPhase === 'streaming' ? 'AI 正在输出' : '请求服务端中' }}<button class="stream-stop" @click="$emit('stop')">停止</button></div>
     <div class="turn-error" v-if="message.error">
       <strong>生成失败</strong>
@@ -57,13 +72,35 @@ export default {
   props: { message: { type: Object, required: true }, streaming: Boolean, streamPhase: { type: String, default: '' } },
   data() { return { copied: false, openState: {}, previewIndex: -1 }; },
   computed: {
-    html() { return renderMarkdown(this.message.content); },
+    html() { return renderMarkdown(this.message.content, this.sources); },
     segments() {
       if (this.message.segments && this.message.segments.length) return this.message.segments;
       return [];
     },
+    sources() {
+      const raw = Array.isArray(this.message.sources) ? this.message.sources : [];
+      const seen = new Set();
+      const list = [];
+      raw.forEach((source, position) => {
+        const url = String((source && source.url) || '').trim();
+        if (!/^https?:\/\//i.test(url) || seen.has(url)) return;
+        seen.add(url);
+        const parsed = Number(source.index);
+        const index = Number.isFinite(parsed) && parsed > 0 ? Math.trunc(parsed) : position + 1;
+        list.push({ index, title: String(source.title || url), url });
+      });
+      return list.sort((a, b) => a.index - b.index);
+    },
   },
   methods: {
+    host(url) {
+      try { return new URL(url).hostname.replace(/^www\./, ''); } catch (e) { return String(url || ''); }
+    },
+    toolState(status) {
+      if (status === 'running') return '进行中';
+      if (status === 'failed') return '失败';
+      return '完成';
+    },
     isOpen(index) {
       if (Object.prototype.hasOwnProperty.call(this.openState, index)) return this.openState[index];
       return !!this.message.streaming;

@@ -85,6 +85,7 @@ CREATE TABLE IF NOT EXISTS relay_jobs (
     text            TEXT    NOT NULL DEFAULT '',
     reasoning       TEXT    NOT NULL DEFAULT '',
     error           TEXT,
+    artifacts_json  TEXT    NOT NULL DEFAULT '{}',
     created_at      INTEGER NOT NULL,
     updated_at      INTEGER NOT NULL
 );

@@ -22,7 +22,37 @@ export function cleanDSML(text) {
     .trim();
 }
 
-function inline(text) {
+function safeHttpUrl(value) {
+  const url = String(value == null ? '' : value).trim();
+  return /^https?:\/\//i.test(url) ? url : '';
+}
+
+/** Build a stable [n] -> source lookup from an assistant message source list. */
+function citationLookup(sources) {
+  const map = new Map();
+  (Array.isArray(sources) ? sources : []).forEach((source, position) => {
+    if (!source) return;
+    const url = safeHttpUrl(source.url);
+    if (!url) return;
+    const parsed = Number(source.index);
+    const index = Number.isFinite(parsed) && parsed > 0 ? Math.trunc(parsed) : position + 1;
+    if (map.has(index)) return;
+    const title = String(source.title || url);
+    map.set(index, { index, url, title });
+  });
+  return map;
+}
+
+function citationBadge(source) {
+  const label = String(source.index);
+  const url = escapeHtml(source.url);
+  const title = escapeHtml(source.title || source.url);
+  return '<sup class="citation"><a href="' + url + '" target="_blank" rel="noopener noreferrer" ' +
+    'title="' + title + '" aria-label="' + title + '" ' +
+    'data-source-index="' + label + '">' + label + '</a></sup>';
+}
+
+function inline(text, citations) {
   let value = escapeHtml(text);
   const codes = [];
   value = value.replace(/`([^`]+)`/g, (_, code) => {
@@ -31,6 +61,13 @@ function inline(text) {
   });
   value = value.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g,
     '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+  // Turn [n] into small superscript badges that link to the cited source.
+  if (citations && citations.size) {
+    value = value.replace(/\[(\d{1,3})\]/g, (match, number) => {
+      const source = citations.get(Number(number));
+      return source ? citationBadge(source) : match;
+    });
+  }
   value = value.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
   value = value.replace(/__([^_]+)__/g, '<strong>$1</strong>');
   value = value.replace(/~~([^~]+)~~/g, '<del>$1</del>');
@@ -38,8 +75,9 @@ function inline(text) {
   return value.replace(/\u0000(\d+)\u0000/g, (_, i) => codes[Number(i)] || '');
 }
 
-/** Small safe CommonMark subset, including GFM tables. */
-export function renderMarkdown(raw) {
+/** Small safe CommonMark subset, including GFM tables and [n] citations. */
+export function renderMarkdown(raw, sources) {
+  const citations = citationLookup(sources);
   const source = cleanDSML(raw).replace(/\r\n/g, '\n').replace(/\r/g, '\n');
   if (!source.trim()) return '';
   const lines = source.split('\n');
@@ -66,11 +104,11 @@ export function renderMarkdown(raw) {
       continue;
     }
     const heading = line.match(/^\s{0,3}(#{1,6})\s+(.*)$/);
-    if (heading) { flush(); const n = heading[1].length; out.push(`<h${n}>${inline(heading[2])}</h${n}>`); i++; continue; }
+    if (heading) { flush(); const n = heading[1].length; out.push(`<h${n}>${inline(heading[2], citations)}</h${n}>`); i++; continue; }
     if (/^\s{0,3}(?:-{3,}|\*{3,}|_{3,})\s*$/.test(line)) { flush(); out.push('<hr>'); i++; continue; }
     if (/^\s{0,3}>\s?/.test(line)) {
       flush(); const quote = [];
-      while (i < lines.length && /^\s{0,3}>\s?/.test(lines[i])) quote.push(inline(lines[i++].replace(/^\s{0,3}>\s?/, '')));
+      while (i < lines.length && /^\s{0,3}>\s?/.test(lines[i])) quote.push(inline(lines[i++].replace(/^\s{0,3}>\s?/, ''), citations));
       out.push('<blockquote>' + quote.join('<br>') + '</blockquote>'); continue;
     }
     const list = line.match(/^\s{0,3}([-*+]|\d+[.)])\s+(.*)$/);
@@ -79,7 +117,7 @@ export function renderMarkdown(raw) {
       while (i < lines.length) {
         const item = lines[i].match(/^\s{0,3}([-*+]|\d+[.)])\s+(.*)$/);
         if (!item) break;
-        items.push('<li>' + inline(item[2].trim()) + '</li>'); i++;
+        items.push('<li>' + inline(item[2].trim(), citations) + '</li>'); i++;
       }
       out.push(ordered ? '<ol>' + items.join('') + '</ol>' : '<ul>' + items.join('') + '</ul>');
       continue;
@@ -95,12 +133,12 @@ export function renderMarkdown(raw) {
       i += 2; const rows = [];
       while (i < lines.length && lines[i].includes('|') && lines[i].trim()) rows.push(split(lines[i++]));
       out.push('<div class="md-table-wrap"><table><thead><tr>' +
-        header.map((c, n) => `<th style="text-align:${align[n] || 'left'}">${inline(c)}</th>`).join('') +
-        '</tr></thead><tbody>' + rows.map((r) => '<tr>' + header.map((c, n) => `<td style="text-align:${align[n] || 'left'}">${inline(r[n] || '')}</td>`).join('') + '</tr>').join('') +
+        header.map((c, n) => `<th style="text-align:${align[n] || 'left'}">${inline(c, citations)}</th>`).join('') +
+        '</tr></thead><tbody>' + rows.map((r) => '<tr>' + header.map((c, n) => `<td style="text-align:${align[n] || 'left'}">${inline(r[n] || '', citations)}</td>`).join('') + '</tr>').join('') +
         '</tbody></table></div>');
       continue;
     }
-    paragraph.push(inline(line.trim())); i++;
+    paragraph.push(inline(line.trim(), citations)); i++;
     if (i < lines.length && isBlock(lines[i], i)) flush();
   }
   flush();

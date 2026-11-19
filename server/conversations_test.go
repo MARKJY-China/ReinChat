@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"net/http"
+	"reflect"
 	"testing"
 	"time"
 )
@@ -156,6 +157,76 @@ func TestConversationLifecycleAndVersionConflict(t *testing.T) {
 	if len(summaries.Conversations) != 1 || summaries.Conversations[0].ID != secondID {
 		t.Fatalf("unexpected conversation list after delete: %+v", summaries.Conversations)
 	}
+}
+
+func TestConversationSegmentsAndSourcesRoundTrip(t *testing.T) {
+	env := newTestEnv(t)
+	user := env.register("timeline_roundtrip", "conversation password")
+	conversationID := "77777777-7777-4777-8777-777777777777"
+	now := int64(1_700_000_500_000)
+	segments := []MessageSegment{
+		{Type: "reasoning", Text: "思考A", Status: "done"},
+		{
+			Type: "tool", Name: "web_search", Label: "搜索网页", Status: "done",
+			CallID: "call_1", Query: "reinchat", Summary: "找到 1 个网页",
+			Detail: "[1] ReinChat\nhttps://example.com/reinchat",
+		},
+		{Type: "reasoning", Text: "思考B", Status: "done"},
+	}
+	sources := []SourceDTO{
+		{Index: 1, Title: "ReinChat 官网", URL: "https://example.com/reinchat", Snippet: "介绍"},
+	}
+	createBody := ConversationDTO{
+		ID: conversationID, Title: "Timeline round trip", CreatedAt: now, UpdatedAt: now,
+		Messages: []MessageDTO{
+			{ID: "u1", Role: "user", Content: "reinchat 是什么", Images: []ImageDTO{}, CreatedAt: now, Status: "COMPLETE"},
+			{
+				ID: "a1", Role: "assistant", Content: "答案[1]", Reasoning: "思考A思考B",
+				Segments: segments, Sources: sources, Images: []ImageDTO{},
+				CreatedAt: now + 1, Status: "COMPLETE",
+			},
+		},
+	}
+	created := env.doJSON(http.MethodPost, "/api/v1/conversations", user.Token, createBody)
+	requireStatus(t, created, http.StatusCreated)
+	if !bytes.Contains(created.body, []byte(`"callId":"call_1"`)) ||
+		!bytes.Contains(created.body, []byte(`"sources":[`)) {
+		t.Fatalf("create response is missing timeline fields: %s", created.body)
+	}
+
+	fetched := env.doJSON(http.MethodGet, "/api/v1/conversations/"+conversationID, user.Token, nil)
+	requireStatus(t, fetched, http.StatusOK)
+	var stored ConversationDTO
+	decodeBody(t, fetched, &stored)
+	if len(stored.Messages) != 2 {
+		t.Fatalf("stored messages = %#v", stored.Messages)
+	}
+	if !reflect.DeepEqual(stored.Messages[1].Segments, segments) {
+		t.Fatalf("segments round trip = %#v, want %#v", stored.Messages[1].Segments, segments)
+	}
+	if !reflect.DeepEqual(stored.Messages[1].Sources, sources) {
+		t.Fatalf("sources round trip = %#v, want %#v", stored.Messages[1].Sources, sources)
+	}
+
+	updated := env.doJSON(http.MethodPut, "/api/v1/conversations/"+conversationID, user.Token, UpdateConversationRequest{
+		BaseVersion: 1, Title: "Timeline round trip", CreatedAt: now, UpdatedAt: now,
+		Messages: createBody.Messages,
+	})
+	requireStatus(t, updated, http.StatusOK)
+	refetched := env.doJSON(http.MethodGet, "/api/v1/conversations/"+conversationID, user.Token, nil)
+	requireStatus(t, refetched, http.StatusOK)
+	decodeBody(t, refetched, &stored)
+	if !reflect.DeepEqual(stored.Messages[1].Segments, segments) ||
+		!reflect.DeepEqual(stored.Messages[1].Sources, sources) {
+		t.Fatalf("segments/sources lost after PUT: %#v / %#v", stored.Messages[1].Segments, stored.Messages[1].Sources)
+	}
+
+	unsafe := createBody
+	unsafe.ID = "88888888-8888-4888-8888-888888888888"
+	unsafe.Messages = append([]MessageDTO(nil), createBody.Messages...)
+	unsafe.Messages[1].Sources = []SourceDTO{{Index: 1, Title: "bad", URL: "javascript:alert(1)"}}
+	rejected := env.doJSON(http.MethodPost, "/api/v1/conversations", user.Token, unsafe)
+	requireStatus(t, rejected, http.StatusBadRequest)
 }
 
 func TestConversationValidationAndLimits(t *testing.T) {

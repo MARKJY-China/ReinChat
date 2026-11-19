@@ -18,6 +18,13 @@ const (
 	maxMessageErrorBytes    = 10_000
 	maxMessageImages        = 20
 	maxConversationImages   = 1000
+	maxMessageSegments      = 500
+	maxSegmentTextBytes     = 1 << 20
+	maxSegmentDetailBytes   = 100_000
+	maxMessageSources       = 50
+	maxSourceTitleRunes     = 500
+	maxSourceURLRunes       = 2048
+	maxSourceSnippetRunes   = 2_000
 	maxTitleRunes           = 500
 	maxMessageIDRunes       = 200
 	maxImageIDRunes         = 200
@@ -384,6 +391,38 @@ func validateConversationFields(title string, createdAt, updatedAt int64, messag
 		}
 		if message.Images == nil {
 			message.Images = []ImageDTO{}
+		}
+		if len(message.Segments) > maxMessageSegments {
+			return invalidField("messages", "a message may contain at most 500 segments")
+		}
+		for j := range message.Segments {
+			segment := &message.Segments[j]
+			if len(segment.Text) > maxSegmentTextBytes || len(segment.Detail) > maxSegmentDetailBytes {
+				return invalidField("segments", "one or more message segments are too large")
+			}
+			if segment.Status != "" && segment.Status != "running" && segment.Status != "done" && segment.Status != "failed" {
+				return invalidField("segments", "segment status must be running, done, or failed")
+			}
+			if hasControlRune(segment.Name) || hasControlRune(segment.Label) || hasControlRune(segment.CallID) {
+				return invalidField("segments", "segment fields contain control characters")
+			}
+		}
+		if len(message.Sources) > maxMessageSources {
+			return invalidField("messages", "a message may reference at most 50 sources")
+		}
+		for j := range message.Sources {
+			source := &message.Sources[j]
+			if utf8.RuneCountInString(source.URL) > maxSourceURLRunes ||
+				(!strings.HasPrefix(source.URL, "http://") && !strings.HasPrefix(source.URL, "https://")) {
+				return invalidField("sources", "source url must be an http or https URL")
+			}
+			if utf8.RuneCountInString(source.Title) > maxSourceTitleRunes ||
+				utf8.RuneCountInString(source.Snippet) > maxSourceSnippetRunes {
+				return invalidField("sources", "source text is too long")
+			}
+			if hasControlRune(source.Title) || hasControlRune(source.URL) {
+				return invalidField("sources", "source fields contain control characters")
+			}
 		}
 		for j := range message.Images {
 			image := &message.Images[j]

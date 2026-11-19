@@ -40,50 +40,106 @@ type RelayCreateRequest struct {
 }
 
 type relayEvent struct {
-	Type      string       `json:"type"`
-	Text      string       `json:"text,omitempty"`
-	Reasoning string       `json:"reasoning,omitempty"`
-	Status    string       `json:"status,omitempty"`
-	Error     string       `json:"error,omitempty"`
-	Tool      string       `json:"tool,omitempty"`
-	Detail    string       `json:"detail,omitempty"`
-	Tools     []relayEvent `json:"tools,omitempty"`
+	Type      string           `json:"type"`
+	Seq       int64            `json:"seq,omitempty"`
+	Text      string           `json:"text,omitempty"`
+	Reasoning string           `json:"reasoning,omitempty"`
+	Status    string           `json:"status,omitempty"`
+	Error     string           `json:"error,omitempty"`
+	Tool      string           `json:"tool,omitempty"`
+	CallID    string           `json:"callId,omitempty"`
+	Query     string           `json:"query,omitempty"`
+	URL       string           `json:"url,omitempty"`
+	Summary   string           `json:"summary,omitempty"`
+	Detail    string           `json:"detail,omitempty"`
+	Sources   []SourceDTO      `json:"sources,omitempty"`
+	Segments  []MessageSegment `json:"segments,omitempty"`
+	Tools     []relayEvent     `json:"tools,omitempty"`
 }
 
+const (
+	maxRelaySources       = 40
+	maxRelayToolDetail    = 4000
+	maxRelaySourceSnippet = 400
+)
+
+// relayHub keeps the per-job event stream plus the chronological segment
+// timeline that a reconnecting client needs to rebuild the process view.
 type relayHub struct {
-	mu      sync.Mutex
-	subs    map[string]map[chan relayEvent]struct{}
-	cancels map[string]context.CancelFunc
-	tools   map[string][]relayEvent
+	mu        sync.Mutex
+	subs      map[string]map[chan relayEvent]struct{}
+	cancels   map[string]context.CancelFunc
+	tools     map[string][]relayEvent
+	segments  map[string][]MessageSegment
+	sources   map[string][]SourceDTO
+	seq       map[string]int64
+	text      map[string]string
+	reasoning map[string]string
 }
 
 func newRelayHub() *relayHub {
 	return &relayHub{
-		subs:    make(map[string]map[chan relayEvent]struct{}),
-		cancels: make(map[string]context.CancelFunc),
-		tools:   make(map[string][]relayEvent),
+		subs:      make(map[string]map[chan relayEvent]struct{}),
+		cancels:   make(map[string]context.CancelFunc),
+		tools:     make(map[string][]relayEvent),
+		segments:  make(map[string][]MessageSegment),
+		sources:   make(map[string][]SourceDTO),
+		seq:       make(map[string]int64),
+		text:      make(map[string]string),
+		reasoning: make(map[string]string),
 	}
 }
 
 func (h *relayHub) subscribe(jobID string) (<-chan relayEvent, func()) {
 	ch := make(chan relayEvent, 64)
 	h.mu.Lock()
+	h.addSubscriberLocked(jobID, ch)
+	h.mu.Unlock()
+	return ch, func() {
+		h.mu.Lock()
+		h.removeSubscriberLocked(jobID, ch)
+		h.mu.Unlock()
+	}
+}
+
+func (h *relayHub) addSubscriberLocked(jobID string, ch chan relayEvent) {
 	if h.subs[jobID] == nil {
 		h.subs[jobID] = make(map[chan relayEvent]struct{})
 	}
 	h.subs[jobID][ch] = struct{}{}
-	h.mu.Unlock()
-	return ch, func() {
-		h.mu.Lock()
-		if set := h.subs[jobID]; set != nil {
-			if _, ok := set[ch]; ok {
-				delete(set, ch)
-				close(ch)
-			}
-			if len(set) == 0 {
-				delete(h.subs, jobID)
-			}
+}
+
+func (h *relayHub) removeSubscriberLocked(jobID string, ch chan relayEvent) {
+	if set := h.subs[jobID]; set != nil {
+		if _, ok := set[ch]; ok {
+			delete(set, ch)
+			close(ch)
 		}
+		if len(set) == 0 {
+			delete(h.subs, jobID)
+		}
+	}
+}
+
+// snapshotAndSubscribe captures the timeline and attaches a live subscriber
+// under the same lock, so no event can fall between the snapshot and the
+// stream. Events delivered on the channel all carry Seq > snapshot.Seq.
+func (h *relayHub) snapshotAndSubscribe(jobID string) (relayArtifacts, <-chan relayEvent, func()) {
+	ch := make(chan relayEvent, 64)
+	h.mu.Lock()
+	h.addSubscriberLocked(jobID, ch)
+	art := relayArtifacts{
+		Tools:     append([]relayEvent(nil), h.tools[jobID]...),
+		Segments:  append([]MessageSegment(nil), h.segments[jobID]...),
+		Sources:   append([]SourceDTO(nil), h.sources[jobID]...),
+		Seq:       h.seq[jobID],
+		Text:      h.text[jobID],
+		Reasoning: h.reasoning[jobID],
+	}
+	h.mu.Unlock()
+	return art, ch, func() {
+		h.mu.Lock()
+		h.removeSubscriberLocked(jobID, ch)
 		h.mu.Unlock()
 	}
 }
@@ -91,8 +147,22 @@ func (h *relayHub) subscribe(jobID string) (<-chan relayEvent, func()) {
 func (h *relayHub) publish(jobID string, event relayEvent) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if event.Type == "tool" {
+	h.seq[jobID]++
+	event.Seq = h.seq[jobID]
+	switch event.Type {
+	case "tool":
 		h.tools[jobID] = append(h.tools[jobID], event)
+		h.applyToolSegmentLocked(jobID, event)
+		if len(event.Sources) > 0 {
+			h.mergeSourcesLocked(jobID, event.Sources)
+		}
+	case "sources":
+		h.mergeSourcesLocked(jobID, event.Sources)
+	case "reasoning":
+		h.reasoning[jobID] += event.Text
+		h.appendReasoningLocked(jobID, event.Text)
+	case "delta":
+		h.text[jobID] += event.Text
 	}
 	for ch := range h.subs[jobID] {
 		select {
@@ -122,6 +192,11 @@ func (h *relayHub) removeCancel(jobID string) {
 	h.mu.Lock()
 	delete(h.cancels, jobID)
 	delete(h.tools, jobID)
+	delete(h.segments, jobID)
+	delete(h.sources, jobID)
+	delete(h.seq, jobID)
+	delete(h.text, jobID)
+	delete(h.reasoning, jobID)
 	h.mu.Unlock()
 }
 
@@ -129,6 +204,246 @@ func (h *relayHub) toolHistory(jobID string) []relayEvent {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return append([]relayEvent(nil), h.tools[jobID]...)
+}
+
+func (h *relayHub) segmentHistory(jobID string) []MessageSegment {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return append([]MessageSegment(nil), h.segments[jobID]...)
+}
+
+func (h *relayHub) sourceHistory(jobID string) []SourceDTO {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return append([]SourceDTO(nil), h.sources[jobID]...)
+}
+
+func (h *relayHub) artifactSnapshot(jobID string) relayArtifacts {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return relayArtifacts{
+		Tools:     append([]relayEvent(nil), h.tools[jobID]...),
+		Segments:  append([]MessageSegment(nil), h.segments[jobID]...),
+		Sources:   append([]SourceDTO(nil), h.sources[jobID]...),
+		Seq:       h.seq[jobID],
+		Text:      h.text[jobID],
+		Reasoning: h.reasoning[jobID],
+	}
+}
+
+func (h *relayHub) appendReasoningLocked(jobID, text string) {
+	if text == "" {
+		return
+	}
+	segments := h.segments[jobID]
+	if n := len(segments); n > 0 && segments[n-1].Type == "reasoning" {
+		segments[n-1].Text += text
+	} else {
+		segments = append(segments, MessageSegment{Type: "reasoning", Text: text})
+	}
+	h.segments[jobID] = segments
+}
+
+func (h *relayHub) applyToolSegmentLocked(jobID string, event relayEvent) {
+	segments := h.segments[jobID]
+	index := -1
+	for i := len(segments) - 1; i >= 0; i-- {
+		segment := segments[i]
+		if segment.Type != "tool" {
+			continue
+		}
+		if event.CallID != "" && segment.CallID == event.CallID {
+			index = i
+			break
+		}
+		if event.CallID == "" && segment.Name == event.Tool && segment.Status == "running" {
+			index = i
+			break
+		}
+	}
+	if index < 0 {
+		segments = append(segments, newToolSegment(event))
+		h.segments[jobID] = segments
+		return
+	}
+	segment := segments[index]
+	segment.Status = event.Status
+	segment.Label = toolSegmentLabel(event.Tool, event.Status)
+	if event.CallID != "" {
+		segment.CallID = event.CallID
+	}
+	if event.Query != "" {
+		segment.Query = truncateRunes(event.Query, 500)
+	}
+	if event.URL != "" {
+		segment.URL = truncateRunes(event.URL, 2048)
+	}
+	if event.Summary != "" {
+		segment.Summary = truncateRunes(event.Summary, 500)
+	}
+	if event.Status != "running" && event.Detail != "" {
+		segment.Detail = truncateRunes(event.Detail, maxRelayToolDetail)
+	}
+	segments[index] = segment
+	h.segments[jobID] = segments
+}
+
+func newToolSegment(event relayEvent) MessageSegment {
+	segment := MessageSegment{
+		Type:   "tool",
+		Name:   event.Tool,
+		CallID: event.CallID,
+		Label:  toolSegmentLabel(event.Tool, event.Status),
+		Status: event.Status,
+	}
+	if segment.Status == "" {
+		segment.Status = "running"
+	}
+	if event.Query != "" {
+		segment.Query = truncateRunes(event.Query, 500)
+	}
+	if event.URL != "" {
+		segment.URL = truncateRunes(event.URL, 2048)
+	}
+	if event.Summary != "" {
+		segment.Summary = truncateRunes(event.Summary, 500)
+	}
+	if event.Status != "running" && event.Detail != "" {
+		segment.Detail = truncateRunes(event.Detail, maxRelayToolDetail)
+	}
+	return segment
+}
+
+func toolSegmentLabel(name, status string) string {
+	searching := status == "" || status == "running"
+	switch name {
+	case "web_search":
+		if searching {
+			return "正在搜索网页"
+		}
+		return "搜索网页"
+	case "fetch_url":
+		if searching {
+			return "正在浏览网页"
+		}
+		return "浏览网页"
+	default:
+		if searching {
+			return "正在使用工具"
+		}
+		return "使用工具"
+	}
+}
+
+// addSources registers search results for a job, de-duplicates them by URL and
+// assigns stable [n] indexes. It returns the full list and the newly added
+// entries (whose indexes the model must use in the tool result).
+func (h *relayHub) addSources(jobID string, results []webResult) (all []SourceDTO, added []SourceDTO) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	list := h.sources[jobID]
+	seen := make(map[string]struct{}, len(list))
+	for _, source := range list {
+		seen[source.URL] = struct{}{}
+	}
+	for _, result := range results {
+		rawURL := strings.TrimSpace(result.URL)
+		if rawURL == "" || (!strings.HasPrefix(rawURL, "http://") && !strings.HasPrefix(rawURL, "https://")) {
+			continue
+		}
+		if _, ok := seen[rawURL]; ok {
+			continue
+		}
+		if len(list) >= maxRelaySources {
+			break
+		}
+		title := strings.TrimSpace(result.Title)
+		if title == "" {
+			title = rawURL
+		}
+		source := SourceDTO{
+			Index:   len(list) + 1,
+			Title:   truncateRunes(title, 300),
+			URL:     truncateRunes(rawURL, 2048),
+			Snippet: truncateRunes(strings.TrimSpace(result.Snippet), maxRelaySourceSnippet),
+		}
+		list = append(list, source)
+		added = append(added, source)
+		seen[rawURL] = struct{}{}
+	}
+	h.sources[jobID] = list
+	all = append([]SourceDTO(nil), list...)
+	return all, added
+}
+
+func (h *relayHub) mergeSourcesLocked(jobID string, incoming []SourceDTO) {
+	list := h.sources[jobID]
+	seen := make(map[string]struct{}, len(list))
+	for _, source := range list {
+		seen[source.URL] = struct{}{}
+	}
+	for _, source := range incoming {
+		if source.URL == "" || (!strings.HasPrefix(source.URL, "http://") && !strings.HasPrefix(source.URL, "https://")) {
+			continue
+		}
+		if _, ok := seen[source.URL]; ok {
+			continue
+		}
+		if len(list) >= maxRelaySources {
+			break
+		}
+		source.Index = len(list) + 1
+		list = append(list, source)
+		seen[source.URL] = struct{}{}
+	}
+	h.sources[jobID] = list
+}
+
+// relayArtifacts is the persisted process timeline of a relay job. It lets a
+// reconnecting client recover the full tool history even after the job ended
+// or the process restarted.
+type relayArtifacts struct {
+	Tools    []relayEvent     `json:"tools"`
+	Segments []MessageSegment `json:"segments"`
+	Sources  []SourceDTO      `json:"sources"`
+	Seq      int64            `json:"seq"`
+	// Text/Reasoning are only used for live snapshots; relay_jobs keeps the
+	// authoritative copy of the final answer.
+	Text      string `json:"-"`
+	Reasoning string `json:"-"`
+}
+
+func (a relayArtifacts) empty() bool {
+	return len(a.Tools) == 0 && len(a.Segments) == 0 && len(a.Sources) == 0 &&
+		a.Text == "" && a.Reasoning == ""
+}
+
+func (s *Server) saveRelayArtifacts(jobID string) {
+	artifacts := s.relay.artifactSnapshot(jobID)
+	raw, err := json.Marshal(artifacts)
+	if err != nil {
+		s.logger.Printf("encode relay artifacts: %v", err)
+		return
+	}
+	if _, err := s.db.Exec(`UPDATE relay_jobs SET artifacts_json = ? WHERE id = ?`, string(raw), jobID); err != nil {
+		s.logger.Printf("persist relay artifacts: %v", err)
+	}
+}
+
+func (s *Server) loadRelayArtifacts(ctx context.Context, jobID string) relayArtifacts {
+	var raw string
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT artifacts_json FROM relay_jobs WHERE id = ?`, jobID).Scan(&raw); err != nil {
+		return relayArtifacts{}
+	}
+	var artifacts relayArtifacts
+	if strings.TrimSpace(raw) == "" || raw == "{}" {
+		return relayArtifacts{}
+	}
+	if err := json.Unmarshal([]byte(raw), &artifacts); err != nil {
+		return relayArtifacts{}
+	}
+	return artifacts
 }
 
 type RelayProviderDTO struct {
@@ -315,21 +630,42 @@ func (s *Server) handleRelayEvents(w http.ResponseWriter, r *http.Request, user 
 		s.internalError(w, r, err)
 		return
 	}
+	terminal := job.Status == "completed" || job.Status == "failed" || job.Status == "cancelled"
+	var artifacts relayArtifacts
+	var ch <-chan relayEvent
+	var cancel func()
+	if !terminal {
+		artifacts, ch, cancel = s.relay.snapshotAndSubscribe(jobID)
+		defer cancel()
+	}
+	if artifacts.empty() {
+		// The live hub is authoritative while a job runs. Once it ends (or
+		// after a restart) fall back to the persisted timeline.
+		artifacts = s.loadRelayArtifacts(r.Context(), jobID)
+	}
+	if artifacts.empty() {
+		artifacts = s.relay.artifactSnapshot(jobID)
+	}
 	w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache, no-transform")
 	w.Header().Set("X-Accel-Buffering", "no")
 	w.WriteHeader(http.StatusOK)
+	text, reasoning := job.Text, job.Reasoning
+	if artifacts.Text != "" {
+		text = artifacts.Text
+	}
+	if artifacts.Reasoning != "" {
+		reasoning = artifacts.Reasoning
+	}
 	snapshot, _ := json.Marshal(relayEvent{
-		Type: "snapshot", Text: job.Text, Reasoning: job.Reasoning, Status: job.Status, Error: job.Error,
-		Tools: s.relay.toolHistory(jobID),
+		Type: "snapshot", Text: text, Reasoning: reasoning, Status: job.Status, Error: job.Error,
+		Tools: artifacts.Tools, Segments: artifacts.Segments, Sources: artifacts.Sources, Seq: artifacts.Seq,
 	})
 	_, _ = fmt.Fprintf(w, "event: snapshot\ndata: %s\n\n", snapshot)
 	flusher.Flush()
-	if job.Status == "completed" || job.Status == "failed" || job.Status == "cancelled" {
+	if terminal {
 		return
 	}
-	ch, cancel := s.relay.subscribe(jobID)
-	defer cancel()
 	ticker := time.NewTicker(20 * time.Second)
 	defer ticker.Stop()
 	for {
@@ -342,6 +678,9 @@ func (s *Server) handleRelayEvents(w http.ResponseWriter, r *http.Request, user 
 		case event, open := <-ch:
 			if !open {
 				return
+			}
+			if event.Seq > 0 && event.Seq <= artifacts.Seq {
+				continue
 			}
 			payload, _ := json.Marshal(event)
 			if _, err := fmt.Fprintf(w, "event: relay\ndata: %s\n\n", payload); err != nil {
@@ -390,7 +729,12 @@ func (s *Server) loadRelayProvider(ctx context.Context, userID int64, providerID
 }
 
 func (s *Server) runRelayJob(ctx context.Context, userID int64, jobID string, p *relayProvider, model, effort string, search bool, messages []MessageDTO) {
-	defer s.relay.removeCancel(jobID)
+	defer func() {
+		// Persist tools/segments/sources before dropping the live hub state so a
+		// reconnecting client can still recover the whole process timeline.
+		s.saveRelayArtifacts(jobID)
+		s.relay.removeCancel(jobID)
+	}()
 	fail := func(code, message string) {
 		s.updateRelayJob(jobID, "failed", nil, nil, message)
 		s.relay.publish(jobID, relayEvent{Type: "error", Status: "failed", Error: message})
@@ -402,11 +746,16 @@ func (s *Server) runRelayJob(ctx context.Context, userID int64, jobID string, p 
 				return
 			}
 		}
-		if contextText := s.webResearch(ctx, messages); contextText != "" {
-			messages = append([]MessageDTO{{
-				ID: "web-research", Role: "system", Content: contextText,
-			}}, messages...)
-			s.relay.publish(jobID, relayEvent{Type: "status", Status: "searching"})
+		if query := lastUserQuery(messages); query != "" {
+			if contextText, ok := s.webResearch(ctx, jobID, query); ok {
+				if instruction := s.citationInstruction(jobID); instruction != "" {
+					contextText += "\n\n" + instruction
+				}
+				messages = append([]MessageDTO{{
+					ID: "web-research", Role: "system", Content: contextText,
+				}}, messages...)
+				s.relay.publish(jobID, relayEvent{Type: "status", Status: "searching"})
+			}
 		}
 	}
 	req, err := s.buildRelayRequest(ctx, p, model, effort, messages)

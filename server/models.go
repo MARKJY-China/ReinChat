@@ -43,13 +43,26 @@ type ImageDTO struct {
 	Height   int     `json:"height"`
 }
 
+// SourceDTO is one numbered web source that an assistant answer may cite.
+// Index is the stable [n] number used in the answer body.
+type SourceDTO struct {
+	Index   int    `json:"index"`
+	Title   string `json:"title"`
+	URL     string `json:"url"`
+	Snippet string `json:"snippet,omitempty"`
+}
+
 type MessageSegment struct {
-	Type   string `json:"type"`
-	Text   string `json:"text,omitempty"`
-	Name   string `json:"name,omitempty"`
-	Label  string `json:"label,omitempty"`
-	Status string `json:"status,omitempty"`
-	Detail string `json:"detail,omitempty"`
+	Type    string `json:"type"`
+	Text    string `json:"text,omitempty"`
+	Name    string `json:"name,omitempty"`
+	Label   string `json:"label,omitempty"`
+	Status  string `json:"status,omitempty"`
+	Detail  string `json:"detail,omitempty"`
+	CallID  string `json:"callId,omitempty"`
+	Query   string `json:"query,omitempty"`
+	URL     string `json:"url,omitempty"`
+	Summary string `json:"summary,omitempty"`
 }
 
 type MessageDTO struct {
@@ -60,6 +73,7 @@ type MessageDTO struct {
 	PDFName   string           `json:"pdfName,omitempty"`
 	PDFText   string           `json:"pdfText,omitempty"`
 	Segments  []MessageSegment `json:"segments,omitempty"`
+	Sources   []SourceDTO      `json:"sources,omitempty"`
 	Model     string           `json:"model,omitempty"`
 	Images    []ImageDTO       `json:"images"`
 	CreatedAt int64            `json:"createdAt"`

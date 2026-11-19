@@ -69,6 +69,50 @@ go run .
 
 已用本地 mock 服务验证：任务 `queued → running → completed`，收到增量文本和 reasoning，最终长度正确。Sogou 检索已实测返回结果。
 
+## 联网过程时间线 / 引用来源（citations-timeline）
+
+`GET /api/v1/relay/jobs/{id}/events` 的 `snapshot` 现在同时携带按时间排序的 `segments`、完整 `tools` 历史和 `sources`，并用单调递增的 `seq` 防止快照与实时事件重复：
+
+```json
+{
+  "type": "snapshot",
+  "seq": 12,
+  "text": "答案[1]",
+  "reasoning": "思考A思考B",
+  "status": "running",
+  "tools": [
+    {"type":"tool","seq":4,"tool":"web_search","callId":"call_1","status":"running","query":"reinchat"},
+    {"type":"tool","seq":5,"tool":"web_search","callId":"call_1","status":"done","query":"reinchat","summary":"找到 5 个网页","detail":"[1] ...","sources":[{"index":1,"title":"...","url":"https://..."}]}
+  ],
+  "segments": [
+    {"type":"reasoning","text":"思考A"},
+    {"type":"tool","name":"web_search","label":"搜索网页","status":"done","callId":"call_1","query":"reinchat","summary":"找到 5 个网页"},
+    {"type":"reasoning","text":"思考B"}
+  ],
+  "sources": [{"index":1,"title":"ReinChat","url":"https://example.com/reinchat","snippet":"..."}]
+}
+```
+
+实时事件：
+
+```
+event: relay
+data: {"type":"tool","seq":4,"tool":"web_search","callId":"call_1","status":"running","query":"reinchat"}
+event: relay
+data: {"type":"tool","seq":5,"tool":"web_search","callId":"call_1","status":"done","query":"reinchat","summary":"找到 5 个网页","detail":"[1] ...","sources":[...]}
+event: relay
+data: {"type":"reasoning","seq":6,"text":"思考B"}
+event: relay
+data: {"type":"delta","seq":7,"text":"答案[1]"}
+```
+
+- 工具状态只有 `running` / `done` / `failed`；`query` 用于搜索，`url` 用于浏览，`summary` 是结果摘要。
+- 服务端按 URL 去重并分配稳定编号 `[1]…[n]`；引用规则附加在最后一个 tool 消息中，要求模型只用这些编号。
+- 任务结束后 `tools` / `segments` / `sources` 会写入 `relay_jobs.artifacts_json`，重连（包括任务已结束）仍能拿到完整时间线。
+- `MessageDTO` 新增 `sources`，`MessageSegment` 新增 `callId/query/url/summary`；会话 GET/PUT 会完整保存和返回它们。
+- Web 端把 `[n]` 渲染为可点击的上标角标，并在正文末尾显示可折叠的“参考来源”列表。
+
+
 ## App 0.4.0
 
 - 登录后保存账号等级

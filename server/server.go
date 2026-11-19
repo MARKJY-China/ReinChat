@@ -57,6 +57,9 @@ type Server struct {
 	logger    *log.Logger
 	dummyHash []byte
 	now       func() time.Time
+	// Search/fetch are indirected so tests can run the agent without network.
+	webSearch func(ctx context.Context, query string) []webResult
+	webFetch  func(ctx context.Context, rawURL string) string
 }
 
 func NewServer(cfg Config) (*Server, error) {
@@ -126,6 +129,8 @@ func NewServer(cfg Config) (*Server, error) {
 		logger:    cfg.Logger,
 		dummyHash: dummyHash,
 		now:       cfg.Now,
+		webSearch: defaultWebSearch,
+		webFetch:  fetchReadablePage,
 	}
 	s.cleanupExpiredTokens(context.Background())
 	return s, nil

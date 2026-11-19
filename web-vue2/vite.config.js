@@ -4,7 +4,9 @@ import { fileURLToPath, URL } from 'node:url';
 
 export default defineConfig({
   plugins: [vue()],
-  base: process.env.VITE_BASE || '/',
+  // The Vue client is embedded and served from /v2/, so its asset URLs must be
+  // rooted there by default. VITE_BASE can override this for other hosts.
+  base: process.env.VITE_BASE || '/v2/',
   resolve: {
     alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) },
   },

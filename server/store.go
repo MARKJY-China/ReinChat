@@ -69,6 +69,12 @@ func openStore(dataDir string) (*sql.DB, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("ensure conversations.settings_json: %w", err)
 	}
+	if _, err := db.ExecContext(ctx,
+		`ALTER TABLE relay_jobs ADD COLUMN artifacts_json TEXT NOT NULL DEFAULT '{}'`); err != nil &&
+		!strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
+		_ = db.Close()
+		return nil, fmt.Errorf("ensure relay_jobs.artifacts_json: %w", err)
+	}
 	_ = os.Chmod(dbPath, 0o600)
 	return db, nil
 }
