@@ -14,16 +14,25 @@ type AuthResponse struct {
 	User      UserDTO `json:"user"`
 }
 
+type ProviderModel struct {
+	ID              string `json:"id"`
+	Name            string `json:"name,omitempty"`
+	ContextWindow   int    `json:"contextWindow,omitempty"`
+	MaxOutputTokens int    `json:"maxOutputTokens,omitempty"`
+	Reasoning       bool   `json:"reasoning,omitempty"`
+}
+
 type ProviderDTO struct {
-	ID           string   `json:"id"`
-	Name         string   `json:"name"`
-	Protocol     string   `json:"protocol"`
-	BaseURL      string   `json:"baseUrl"`
-	APIKey       string   `json:"apiKey"`
-	Model        string   `json:"model"`
-	SystemPrompt string   `json:"systemPrompt"`
-	Temperature  *float64 `json:"temperature"`
-	MaxTokens    *int     `json:"maxTokens"`
+	ID           string          `json:"id"`
+	Name         string          `json:"name"`
+	Protocol     string          `json:"protocol"`
+	BaseURL      string          `json:"baseUrl"`
+	APIKey       string          `json:"apiKey"`
+	Model        string          `json:"model"`
+	Models       []ProviderModel `json:"models,omitempty"`
+	SystemPrompt string          `json:"systemPrompt"`
+	Temperature  *float64        `json:"temperature"`
+	MaxTokens    *int            `json:"maxTokens"`
 }
 
 type ImageDTO struct {
@@ -34,16 +43,26 @@ type ImageDTO struct {
 	Height   int     `json:"height"`
 }
 
+type MessageSegment struct {
+	Type   string `json:"type"`
+	Text   string `json:"text,omitempty"`
+	Name   string `json:"name,omitempty"`
+	Label  string `json:"label,omitempty"`
+	Status string `json:"status,omitempty"`
+	Detail string `json:"detail,omitempty"`
+}
+
 type MessageDTO struct {
-	ID        string     `json:"id"`
-	Role      string     `json:"role"`
-	Content   string     `json:"content"`
-	Reasoning string     `json:"reasoning,omitempty"`
-	Model     string     `json:"model,omitempty"`
-	Images    []ImageDTO `json:"images"`
-	CreatedAt int64      `json:"createdAt"`
-	Status    string     `json:"status"`
-	Error     *string    `json:"error"`
+	ID        string           `json:"id"`
+	Role      string           `json:"role"`
+	Content   string           `json:"content"`
+	Reasoning string           `json:"reasoning,omitempty"`
+	Segments  []MessageSegment `json:"segments,omitempty"`
+	Model     string           `json:"model,omitempty"`
+	Images    []ImageDTO       `json:"images"`
+	CreatedAt int64            `json:"createdAt"`
+	Status    string           `json:"status"`
+	Error     *string          `json:"error"`
 }
 
 type ConversationSettings struct {

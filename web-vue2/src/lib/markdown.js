@@ -17,6 +17,8 @@ export function cleanDSML(text) {
   return String(text || '')
     .replace(/<[^>]*DSML[^>]*calls[^>]*>[\s\S]*?<\/[^>]*DSML[^>]*calls[^>]*>/gi, '')
     .replace(/<[^>]*DSML[^>]*>/gi, '')
+    .replace(/(^|\n)\s*<\s*(?=\n|$)/g, '$1')
+    .replace(/<$/, '')
     .trim();
 }
 
