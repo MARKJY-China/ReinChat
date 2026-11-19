@@ -1,0 +1,24 @@
+# ReinChat chat-agent restrictions. This is applied as a --patch overlay above
+# the shipped sdk profile. Keep the sandbox rooted at REINCHAT_WORKSPACE_ROOT.
+- id: tool-plugin-manager
+  disabled: true
+- id: plugin-manager
+  disabled: true
+- id: tool-workflow
+  disabled: true
+- id: tool-agent-team
+  disabled: true
+- id: tool-subagent
+  disabled: true
+- id: tool-subagent-control
+  disabled: true
+- id: tool-subagent-fork
+  disabled: true
+- id: tool-office
+  disabled: true
+- id: tool-schedule
+  disabled: true
+- id: sandbox-policy
+  config:
+    mode: workspace-write
+    workspaceRoot: !!js process.env.REINCHAT_WORKSPACE_ROOT

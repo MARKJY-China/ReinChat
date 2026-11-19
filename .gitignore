@@ -61,3 +61,8 @@ screenshots/2*.png
 desktop/node_modules/
 desktop/dist/
 desktop/src-tauri/target/
+
+# DSH agent gateway runtime data
+agent-gateway/workspaces/
+agent-gateway/node_modules/
+agent-gateway/.dsh-home/

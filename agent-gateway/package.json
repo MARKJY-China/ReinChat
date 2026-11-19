@@ -1,0 +1,9 @@
+{
+  "name": "@reinchat/agent-gateway",
+  "private": true,
+  "type": "module",
+  "version": "0.1.0",
+  "scripts": {
+    "start": "node src/server.mjs"
+  }
+}
