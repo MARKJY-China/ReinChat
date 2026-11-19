@@ -1,7 +1,7 @@
 <template>
   <div class="login-shell">
     <div class="login-card">
-      <img class="login-logo" src="/icon-192.png" alt="ReinChat">
+      <img class="login-logo" :src="'icon-192.png'" alt="ReinChat">
       <div class="login-brand">ReinChat <small>WEB</small></div>
       <p class="login-tagline">一个安静、流畅的 AI 对话空间。与 App 实时同步。</p>
       <label>服务器</label>

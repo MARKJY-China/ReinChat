@@ -3,7 +3,7 @@
   <div v-else class="app-shell">
     <aside class="sidebar">
       <div class="sidebar-head">
-        <div class="brand small"><img class="brand-icon" src="/icon-192.png" alt=""><span>ReinChat <small>WEB</small></span></div>
+        <div class="brand small"><img class="brand-icon" :src="'icon-192.png'" alt=""><span>ReinChat <small>WEB</small></span></div>
         <button class="icon-btn" title="新建会话" @click="newConversation">＋</button>
       </div>
       <button class="new-chat" @click="newConversation"><span class="new-chat-icon">＋</span><span>新建会话</span><span class="kbd">N</span></button>
@@ -32,9 +32,9 @@
         <div class="messages-inner">
           <template v-if="active">
             <MessageItem v-for="(m, index) in active.messages" :key="m.id" :message="m" :streaming="sending" @retry="retry(m)" @edit="beginEdit" @rewind="rewind(index)" />
-            <div class="empty-chat" v-if="!active.messages.length"><img src="/icon-192.png" alt=""><h2>开始新的对话</h2><p>在下方输入问题，ReinChat 会实时同步到你的所有设备。</p></div>
+            <div class="empty-chat" v-if="!active.messages.length"><img :src="'icon-192.png'" alt=""><h2>开始新的对话</h2><p>在下方输入问题，ReinChat 会实时同步到你的所有设备。</p></div>
           </template>
-          <div class="empty-chat" v-else><img src="/icon-192.png" alt=""><h2>选择一个会话</h2><p>或点击左侧「新建会话」开始。</p></div>
+          <div class="empty-chat" v-else><img :src="'icon-192.png'" alt=""><h2>选择一个会话</h2><p>或点击左侧「新建会话」开始。</p></div>
         </div>
       </section>
       <ComposerBar

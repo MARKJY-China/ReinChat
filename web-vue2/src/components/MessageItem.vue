@@ -1,6 +1,6 @@
 <template>
   <article class="msg" :class="message.role">
-    <div class="msg-avatar" v-if="message.role === 'assistant'"><img src="/icon-192.png" alt=""></div>
+    <div class="msg-avatar" v-if="message.role === 'assistant'"><img :src="'icon-192.png'" alt=""></div>
     <div class="msg-content">
       <div class="msg-role">{{ message.role === 'user' ? '你' : (message.model || 'ReinChat') }}<span>{{ formatTime(message.createdAt) }}</span></div>
       <details class="reasoning" v-if="message.reasoning">

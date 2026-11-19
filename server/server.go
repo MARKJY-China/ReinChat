@@ -162,6 +162,14 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) route(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Path
+	if path == "/v2" {
+		http.Redirect(w, r, "/v2/", http.StatusTemporaryRedirect)
+		return
+	}
+	if strings.HasPrefix(path, "/v2/") {
+		s.serveWebNext(w, r)
+		return
+	}
 	switch path {
 	case "/", "/index.html", "/app.js", "/style.css", "/vendor/vue.min.js",
 		"/admin", "/admin.html", "/admin.js",
