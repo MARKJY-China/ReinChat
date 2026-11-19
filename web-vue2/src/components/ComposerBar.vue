@@ -3,7 +3,7 @@
     <div class="composer">
       <div class="pdf-chip" v-if="pdfName"><span class="pdf-icon">PDF</span><span class="pdf-name">{{ pdfName }}</span><button class="pdf-remove" @click="$emit('remove-pdf')">×</button></div>
       <div class="image-strip" v-if="imagePreviews && imagePreviews.length">
-        <span v-for="(img, index) in imagePreviews" :key="index" class="image-thumb"><img :src="img.url" :alt="img.name"><button @click="$emit('remove-image', index)">×</button></span>
+        <span v-for="(img, index) in imagePreviews" :key="index" class="image-thumb"><img :src="img.url" :alt="img.name" @click="previewIndex = index"><button @click="$emit('remove-image', index)">×</button></span>
       </div>
       <textarea :value="draft" rows="1" placeholder="输入消息，或粘贴 PDF / 图片…" @input="$emit('update:draft', $event.target.value)" @keydown.enter.exact.prevent="$emit('send')" @paste="onPaste"></textarea>
       <div class="composer-foot">
@@ -23,14 +23,16 @@
       </div>
     </div>
     <p class="composer-hint">{{ level < 2 ? '旧版 Chat 内核 · Enter 发送' : 'Enter 发送 · Shift + Enter 换行' }}</p>
+    <ImagePreview v-if="previewIndex >= 0" :images="imagePreviews.map((img) => img.url)" :index.sync="previewIndex" @close="previewIndex = -1" />
   </footer>
 </template>
 
 <script>
 import UiDropdown from './UiDropdown.vue';
+import ImagePreview from './ImagePreview.vue';
 export default {
   name: 'ComposerBar',
-  components: { UiDropdown },
+  components: { UiDropdown, ImagePreview },
   props: {
     providerId: String, model: String, reasoningEffort: String, search: Boolean,
     draft: String, sending: Boolean, level: Number,
@@ -38,7 +40,7 @@ export default {
     pdfName: { type: String, default: '' }, pdfBusy: Boolean,
     imagePreviews: { type: Array, default: () => [] },
   },
-  data() { return { openDropdown: '' }; },
+  data() { return { openDropdown: '', previewIndex: -1 }; },
   watch: {
     sending(value) { if (value) this.openDropdown = ''; },
   },

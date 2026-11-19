@@ -6,7 +6,7 @@
     </div>
     <div class="message-pdf" v-if="message.pdfName"><span class="pdf-icon">PDF</span><span>{{ message.pdfName }}</span></div>
     <div class="message-images" v-if="message.images && message.images.length">
-      <img v-for="(img, index) in message.images" :key="index" :src="img.url || ('/api/v1/files/' + img.id)" alt="附件图片">
+      <img v-for="(img, index) in message.images" :key="index" :src="img.url || ('/api/v1/files/' + img.id)" alt="附件图片" @click="previewIndex = index">
     </div>
     <div class="process" v-if="segments.length">
       <template v-for="(segment, index) in segments" :key="index">
@@ -44,15 +44,18 @@
       <button v-if="message.content" @click="copyMessage">{{ copied ? '已复制' : '复制' }}</button>
       <button @click="$emit('rewind')">回退</button>
     </div>
+    <ImagePreview v-if="previewIndex >= 0" :images="message.images.map((img) => img.url || ('/api/v1/files/' + img.id))" :index.sync="previewIndex" @close="previewIndex = -1" />
   </article>
 </template>
 
 <script>
 import { renderMarkdown } from '../lib/markdown';
+import ImagePreview from './ImagePreview.vue';
 export default {
   name: 'MessageItem',
+  components: { ImagePreview },
   props: { message: { type: Object, required: true }, streaming: Boolean, streamPhase: { type: String, default: '' } },
-  data() { return { copied: false, openState: {} }; },
+  data() { return { copied: false, openState: {}, previewIndex: -1 }; },
   computed: {
     html() { return renderMarkdown(this.message.content); },
     segments() {
