@@ -191,6 +191,7 @@ export default {
       providerModelsLoading: false, settingsOpen: false,
       fontScale: Number(localStorage.getItem('reinchat_font_scale') || 1),
       pdfAttachment: null, pdfBusy: false, pdfError: '', imageAttachments: [], followBottom: true,
+      syncAbort: null, syncTimer: null,
       convMenu: null, pinnedIds: JSON.parse(localStorage.getItem('reinchat_pins') || '[]'),
       selectionMode: false, selectedIds: [], renamingId: '', renameDraft: '',
     };
@@ -237,6 +238,7 @@ export default {
     this.applyFontScale();
     document.addEventListener('click', this.closeConvMenu);
     document.addEventListener('paste', this.onGlobalPaste);
+    if (this.token) this.startSync();
     window.addEventListener('popstate', this.openFromLocation);
     await this.waitForFonts();
     if (this.token) {
@@ -249,6 +251,7 @@ export default {
     document.removeEventListener('click', this.closeConvMenu);
     window.removeEventListener('popstate', this.openFromLocation);
     document.removeEventListener('paste', this.onGlobalPaste);
+    this.stopSync();
   },
   updated() {
     if (this.followBottom) this.scrollThreadToBottom();
@@ -262,10 +265,69 @@ export default {
         this.token = data.token; this.user = data.user.username; this.server = payload.server; this.level = data.user.level || 1;
         localStorage.setItem(TOKEN, this.token); localStorage.setItem(USER, this.user); localStorage.setItem(SERVER, this.server);
         await this.refresh();
+        this.startSync();
         await this.openFromLocation();
       } catch (e) { this.authError = e.message; } finally { this.busy = false; }
     },
+    stopSync() {
+      if (this.syncTimer) { clearTimeout(this.syncTimer); this.syncTimer = null; }
+      if (this.syncAbort) { try { this.syncAbort.abort(); } catch (e) { /* ignore */ } this.syncAbort = null; }
+    },
+    startSync() {
+      this.stopSync();
+      if (!this.token) return;
+      const controller = new AbortController();
+      this.syncAbort = controller;
+      (async () => {
+        try {
+          const res = await fetch(this.api.base() + '/v1/events', {
+            headers: { Authorization: 'Bearer ' + this.token, Accept: 'text/event-stream' },
+            signal: controller.signal,
+          });
+          if (!res.ok || !res.body) throw new Error('sync HTTP ' + res.status);
+          const reader = res.body.getReader();
+          const decoder = new TextDecoder();
+          let buffer = '';
+          while (true) {
+            const part = await reader.read();
+            if (part.done) break;
+            buffer += decoder.decode(part.value, { stream: true });
+            let cut;
+            while ((cut = buffer.indexOf('\n\n')) >= 0) {
+              const block = buffer.slice(0, cut);
+              buffer = buffer.slice(cut + 2);
+              const data = block.split('\n').filter((line) => line.startsWith('data:')).map((line) => line.slice(5).trim()).join('');
+              if (!data) continue;
+              try { await this.applySyncEvent(JSON.parse(data)); } catch (e) { /* ignore */ }
+            }
+          }
+        } catch (e) {
+          if (controller.signal.aborted) return;
+        }
+        if (this.token && !controller.signal.aborted) {
+          this.syncTimer = setTimeout(() => this.startSync(), 2500);
+        }
+      })();
+    },
+    async applySyncEvent(event) {
+      const list = await this.api.conversations();
+      this.conversations = list.conversations || [];
+      const id = event.conversationId;
+      if (!id) return;
+      if (event.deleted) {
+        this.conversations = this.conversations.filter((c) => c.id !== id);
+        if (this.activeId === id) { this.active = null; this.activeId = ''; }
+        return;
+      }
+      if (this.activeId === id && !this.streams[id]) {
+        const data = await this.api.conversation(id);
+        await this.hydrateImages(data);
+        this.$set(this.conversationCache, id, data);
+        this.active = data;
+      }
+    },
     logout() {
+      this.stopSync();
       localStorage.removeItem(TOKEN); localStorage.removeItem(USER); localStorage.removeItem(SERVER);
       this.token = ''; this.user = ''; this.active = null; this.activeId = ''; this.conversations = [];
       if (window.location.pathname !== this.webBase) window.history.pushState({}, '', this.webBase);
@@ -275,9 +337,14 @@ export default {
         const [list, account, providers] = await Promise.all([this.api.conversations(), this.api.account(), this.api.relayProviders()]);
         this.conversations = list.conversations || [];
         this.level = account.user.level || 1; this.agentAvailable = !!account.agentAvailable;
-        this.providers = providers.providers || [];
         const full = await this.api.providers();
         this.providerRecords = full.providers || [];
+        const fullById = {};
+        this.providerRecords.forEach((p) => { fullById[p.id] = p; });
+        this.providers = (providers.providers || []).map((p) => ({
+          ...p,
+          models: (fullById[p.id] && fullById[p.id].models) || p.models || [],
+        }));
         if (!this.providerId && this.providers.length) this.providerId = this.providers[0].id;
         if (this.activeId) await this.openConversation(this.activeId);
       } catch (e) { this.authError = e.message; }

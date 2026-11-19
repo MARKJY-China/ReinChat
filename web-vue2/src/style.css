@@ -427,3 +427,17 @@ html.dark .thread:hover::-webkit-scrollbar-thumb { background: rgba(235,231,220,
 .pdf-error { margin: 5px 0 0; color: var(--danger); font-size: 10.5px; }
 .pdf-chip.loading { color: var(--muted); }
 .mini-spinner { width: 11px; height: 11px; margin-left: auto; border: 1.5px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: spin .7s linear infinite; }
+.tool-icon { width: 13px; height: 13px; flex: 0 0 13px; fill: none; stroke: currentColor; stroke-width: 1.35; stroke-linecap: round; stroke-linejoin: round; color: #99948a; }
+.tool-card.running .tool-icon { color: var(--accent); }
+.tool-card.failed .tool-icon { color: var(--danger); }
+.tool-card.done .tool-icon { color: #8d988f; }
+.tool-detail summary { display: inline-flex; align-items: center; gap: 4px; list-style: none; }
+.tool-detail summary::-webkit-details-marker { display: none; }
+.tool-detail summary .chev { width: 9px; height: 9px; transition: transform .18s var(--ease); }
+.tool-detail[open] summary .chev { transform: rotate(90deg); }
+.tool-detail pre { scrollbar-width: thin; scrollbar-color: rgba(120,115,105,.3) transparent; }
+.tool-detail pre::-webkit-scrollbar { width: 6px; height: 6px; }
+.tool-detail pre::-webkit-scrollbar-track { background: transparent; }
+.tool-detail pre::-webkit-scrollbar-thumb { background: rgba(120,115,105,.28); border-radius: 99px; }
+.tool-detail pre::-webkit-scrollbar-button { display: none; width: 0; height: 0; }
+html.dark .tool-detail pre::-webkit-scrollbar-thumb { background: rgba(220,215,205,.28); }

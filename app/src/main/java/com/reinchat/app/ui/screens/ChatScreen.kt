@@ -489,6 +489,7 @@ fun ChatScreen(
                     onClearPdfError = onClearPdfError,
                     onRemoveAttachment = onRemoveAttachment,
                     onSend = {
+                        keyboard?.hide()
                         followLatest = true
                         onSend()
                     },
