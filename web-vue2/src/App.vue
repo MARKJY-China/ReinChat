@@ -1,6 +1,6 @@
 <template>
   <LoginView v-if="!token" :error="authError" :busy="busy" :initial-server="server" @submit="login" />
-  <div v-else class="app">
+  <div v-else class="app" :class="{ 'rail-collapsed': railCollapsed, 'rail-open': railOpen }">
     <aside class="rail">
       <div class="rail-top">
         <span class="wordmark small"><span class="mark">R</span>ReinChat</span>
@@ -9,6 +9,7 @@
       <div class="rail-label">会话</div>
       <nav class="rail-list">
         <button v-for="c in conversations" :key="c.id" class="rail-item" :class="{ active: c.id === activeId }" @click="openConversation(c.id)">
+          <span class="rail-item-mark">{{ (c.title || '新').slice(0, 1) }}</span>
           <span class="rail-item-title">{{ c.title || '新会话' }}</span>
           <span class="rail-item-time">{{ formatShort(c.updatedAt) }}</span>
         </button>
@@ -30,7 +31,7 @@
 
     <main class="main">
       <header class="topbar">
-        <button class="icon-btn rail-toggle" @click="railOpen = !railOpen">☰</button>
+        <button class="icon-btn rail-toggle" :title="railCollapsed ? '展开会话列表' : '收起会话列表'" @click="toggleRail">☰</button>
         <div class="crumb"><span class="crumb-root">ReinChat</span><span class="crumb-sep">/</span><span>{{ active ? (active.title || '新会话') : '新会话' }}</span></div>
         <div class="top-actions">
           <span class="sync-dot" title="实时同步"></span>
@@ -127,6 +128,7 @@ export default {
       conversations: [], active: null, activeId: '',
       providers: [], providerRecords: [], providerId: '', model: '', reasoningEffort: 'high', search: true,
       draft: '', level: 1, agentAvailable: false, userMenu: false, railOpen: false,
+      railCollapsed: localStorage.getItem('reinchat_rail_collapsed') === '1',
       conversationCache: {}, streams: {}, applyingSettings: false, settingsTimer: null,
       providerModal: false, providerDraft: null, providerBusy: false, providerError: '',
     };
@@ -238,7 +240,13 @@ export default {
       if (!window.confirm('删除服务商「' + p.name + '」？')) return;
       try { await this.api.deleteProvider(p.id); if (this.providerId === p.id) this.providerId = ''; await this.refresh(); } catch (e) { this.providerError = e.message; }
     },
+    toggleRail() {
+      if (window.innerWidth <= 800) { this.railOpen = !this.railOpen; return; }
+      this.railCollapsed = !this.railCollapsed;
+      localStorage.setItem('reinchat_rail_collapsed', this.railCollapsed ? '1' : '0');
+    },
     newConversation() {
+      this.railOpen = false;
       const now = Date.now();
       this.active = { id: uuid(), title: '新会话', createdAt: now, updatedAt: now, version: 0, messages: [], settings: { providerId: this.providerId, model: this.model, reasoningEffort: this.reasoningEffort, search: this.search } };
       this.activeId = this.active.id; this.draft = '';
