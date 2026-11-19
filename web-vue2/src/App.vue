@@ -509,7 +509,7 @@ export default {
     async maybeGenerateTitle(conversation) {
       if (!conversation || (conversation.title && conversation.title !== '新会话')) return;
       const users = (conversation.messages || []).filter((m) => m.role === 'user');
-      if (users.length !== 1 || !users[0].content) return;
+      if (!users.length || !users[0].content) return;
       const settings = conversation.settings || {};
       const fallback = users[0].content.replace(/\s+/g, ' ').trim().slice(0, 20);
       try {
