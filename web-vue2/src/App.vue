@@ -1,5 +1,10 @@
 <template>
-  <LoginView v-if="!token" :error="authError" :busy="busy" :initial-server="server" @submit="login" />
+  <div v-if="booting" class="boot">
+    <span class="wordmark"><span class="mark">R</span>ReinChat</span>
+    <div class="boot-line"><span></span></div>
+    <p>正在载入对话</p>
+  </div>
+  <LoginView v-else-if="!token" :error="authError" :busy="busy" :initial-server="server" @submit="login" />
   <div v-else class="app" :class="{ 'rail-collapsed': railCollapsed, 'rail-open': railOpen }">
     <aside class="rail">
       <div class="rail-top">
@@ -123,6 +128,7 @@ export default {
   data() {
     return {
       token: localStorage.getItem(TOKEN) || '',
+      booting: true,
       user: localStorage.getItem(USER) || '',
       server: localStorage.getItem(SERVER) || window.location.origin,
       authError: '', busy: false,
@@ -159,9 +165,11 @@ export default {
     reasoningEffort() { if (!this.applyingSettings) this.scheduleSettings(); },
     search() { if (!this.applyingSettings) this.scheduleSettings(); },
   },
-  mounted() {
+  async mounted() {
     this.applyTheme();
-    if (this.token) this.refresh();
+    await this.waitForFonts();
+    if (this.token) await this.refresh();
+    this.booting = false;
   },
   methods: {
     async login(payload) {
@@ -245,6 +253,13 @@ export default {
     async deleteProvider(p) {
       if (!window.confirm('删除服务商「' + p.name + '」？')) return;
       try { await this.api.deleteProvider(p.id); if (this.providerId === p.id) this.providerId = ''; await this.refresh(); } catch (e) { this.providerError = e.message; }
+    },
+    waitForFonts() {
+      if (!document.fonts) return Promise.resolve();
+      return Promise.race([
+        document.fonts.load('16px "HarmonyOS Sans SC"').then(() => document.fonts.ready),
+        new Promise((resolve) => setTimeout(resolve, 1200)),
+      ]).catch(() => {});
     },
     applyTheme() { document.documentElement.classList.toggle('dark', this.dark); },
     toggleTheme() {

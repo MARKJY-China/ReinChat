@@ -24,6 +24,7 @@
     <div class="turn-actions" v-if="!message.streaming">
       <button v-if="message.role === 'user'" @click="$emit('edit', message)">编辑</button>
       <button v-if="message.role === 'assistant'" @click="$emit('retry', message)">重试</button>
+      <button v-if="message.content" @click="copyMessage">{{ copied ? '已复制' : '复制' }}</button>
       <button @click="$emit('rewind')">回退</button>
     </div>
   </article>
@@ -34,11 +35,25 @@ import { renderMarkdown } from '../lib/markdown';
 export default {
   name: 'MessageItem',
   props: { message: { type: Object, required: true }, streaming: Boolean, streamPhase: { type: String, default: '' } },
+  data() { return { copied: false }; },
   computed: { html() { return renderMarkdown(this.message.content); } },
   methods: {
     formatTime(ms) {
       if (!ms) return '';
       return new Date(ms).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+    },
+    async copyMessage() {
+      const text = this.message.content || '';
+      try {
+        if (navigator.clipboard) await navigator.clipboard.writeText(text);
+        else {
+          const area = document.createElement('textarea');
+          area.value = text; document.body.appendChild(area); area.select();
+          document.execCommand('copy'); area.remove();
+        }
+        this.copied = true;
+        setTimeout(() => { this.copied = false; }, 1400);
+      } catch (e) { /* ignore */ }
     },
   },
 };

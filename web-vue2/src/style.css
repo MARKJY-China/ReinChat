@@ -51,6 +51,12 @@ a { color: inherit; }
 .field input:focus, .field textarea:focus { border-color: #b9b3a5; box-shadow: 0 0 0 3px rgba(22,22,19,.045); }
 .auth-error { margin: 2px 0 0; color: var(--danger); font-size: 12px; }
 
+/* boot */
+.boot { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 22px; background: var(--bg); animation: fade .2s ease both; }
+.boot p { margin: 0; color: var(--muted); font-size: 11px; letter-spacing: .06em; }
+.boot-line { width: 86px; height: 1px; overflow: hidden; background: var(--line); }
+.boot-line span { display: block; width: 36%; height: 100%; background: var(--ink); animation: loadslide 1s var(--ease) infinite; }
+
 /* auth */
 .auth { min-height: 100%; display: flex; flex-direction: column; padding: 30px 38px; }
 .auth-brand { display: flex; align-items: center; justify-content: space-between; }
@@ -182,7 +188,8 @@ a { color: inherit; }
 .turn-error details { margin-top: 4px; color: var(--muted); }
 .turn-error summary { cursor: pointer; font-size: 10.5px; }
 .turn-error pre { margin: 6px 0 0; padding: 9px 11px; max-height: 220px; overflow: auto; border-left: 2px solid rgba(180, 67, 54, .35); white-space: pre-wrap; color: #8c6a62; font: 10.5px/1.55 'HarmonyOS Sans SC', sans-serif; }
-.turn-actions { display: flex; gap: 10px; margin-top: 9px; opacity: 0; transition: opacity .15s; }
+.turn-actions { display: flex; gap: 10px; margin-top: 9px; opacity: .45; transition: opacity .15s; }
+.turn.user .turn-actions { justify-content: flex-end; }
 .turn:hover .turn-actions, .turn-actions:focus-within { opacity: 1; }
 .turn-actions button { border: 0; background: transparent; padding: 2px 0; color: #a19c92; font-size: 10.5px; }
 .turn-actions button:hover { color: var(--ink); }
@@ -281,6 +288,7 @@ html.dark .rail-list:hover { scrollbar-color: rgba(235,231,220,.28) transparent;
 html.dark .rail-list::-webkit-scrollbar-thumb { background: rgba(235,231,220,.07); }
 html.dark .rail-list:hover::-webkit-scrollbar-thumb { background: rgba(235,231,220,.3); }
 
+@keyframes loadslide { from { transform: translateX(-100%); } to { transform: translateX(300%); } }
 @keyframes rise { from { opacity: 0; transform: translateY(7px); } to { opacity: 1; transform: none; } }
 @keyframes fade { from { opacity: 0; } to { opacity: 1; } }
 @keyframes blink { 0%, 100% { opacity: .3; } 50% { opacity: 1; } }

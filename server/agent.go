@@ -86,17 +86,16 @@ func (s *Server) runRelaySearchAgent(ctx context.Context, jobID string, p *relay
 		content = cleanDSMLText(content)
 	}
 	if len(calls) == 0 {
-		// The model answered directly. Emit it as one complete delta.
+		// The model answered directly. This decision call is non-streaming, so
+		// replay its text in small chunks to keep the UI progressive.
 		text := cleanDSMLText(content)
 		if text == "" {
 			return false
 		}
 		reasoning := cleanDSMLText(choice.Reasoning)
 		_ = s.updateRelayJob(jobID, "completed", &text, &reasoning, "")
-		s.relay.publish(jobID, relayEvent{Type: "delta", Text: text})
-		if reasoning != "" {
-			s.relay.publish(jobID, relayEvent{Type: "reasoning", Text: reasoning})
-		}
+		publishTextChunks(ctx, s, jobID, "reasoning", reasoning)
+		publishTextChunks(ctx, s, jobID, "delta", text)
 		s.relay.publish(jobID, relayEvent{Type: "status", Status: "completed"})
 		return true
 	}
@@ -119,6 +118,27 @@ func (s *Server) runRelaySearchAgent(ctx context.Context, jobID string, p *relay
 		})
 	}
 	return s.streamAgentAnswer(ctx, jobID, p, base, model, effort)
+}
+
+func publishTextChunks(ctx context.Context, s *Server, jobID, eventType, text string) {
+	if text == "" {
+		return
+	}
+	runes := []rune(text)
+	const size = 18
+	for start := 0; start < len(runes); start += size {
+		end := start + size
+		if end > len(runes) {
+			end = len(runes)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+		s.relay.publish(jobID, relayEvent{Type: eventType, Text: string(runes[start:end])})
+		time.Sleep(18 * time.Millisecond)
+	}
 }
 
 func (s *Server) runAgentTool(ctx context.Context, name, arguments string) string {
