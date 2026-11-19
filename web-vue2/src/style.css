@@ -368,3 +368,9 @@ html.dark .rail-list:hover::-webkit-scrollbar-thumb { background: rgba(235,231,2
 .pdf-trigger { cursor: pointer; }
 .pdf-trigger input { display: none; }
 .pdf-trigger.loading { opacity: .6; }
+.message-images { display: flex; gap: 6px; flex-wrap: wrap; margin: 0 0 9px; }
+.message-images img { width: 128px; height: 96px; object-fit: cover; border: 1px solid var(--line); border-radius: 8px; }
+.image-strip { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 7px; }
+.image-thumb { position: relative; display: inline-block; }
+.image-thumb img { width: 48px; height: 48px; object-fit: cover; border: 1px solid var(--line); border-radius: 7px; }
+.image-thumb button { position: absolute; top: -5px; right: -5px; width: 16px; height: 16px; border: 0; border-radius: 50%; background: var(--ink); color: var(--white); font-size: 11px; line-height: 1; }

@@ -5,6 +5,9 @@
       <time>{{ formatTime(message.createdAt) }}</time>
     </div>
     <div class="message-pdf" v-if="message.pdfName"><span class="pdf-icon">PDF</span><span>{{ message.pdfName }}</span></div>
+    <div class="message-images" v-if="message.images && message.images.length">
+      <img v-for="(img, index) in message.images" :key="index" :src="img.url || ('/api/v1/files/' + img.id)" alt="附件图片">
+    </div>
     <div class="process" v-if="segments.length">
       <template v-for="(segment, index) in segments" :key="index">
         <div v-if="segment.type === 'reasoning'" class="thinking" :class="{ open: isOpen(index) }">

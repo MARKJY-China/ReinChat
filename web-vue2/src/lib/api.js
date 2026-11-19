@@ -45,6 +45,16 @@ export class Api {
   updateConversation(id, body) {
     return this.request('/v1/conversations/' + encodeURIComponent(id), { method: 'PUT', body });
   }
+  async uploadFile(file) {
+    const form = new FormData();
+    form.append('file', file);
+    const res = await fetch(this.base() + '/v1/files', { method: 'POST', headers: { Authorization: 'Bearer ' + this.token }, body: form });
+    const raw = await res.text();
+    let data = {};
+    try { data = raw ? JSON.parse(raw) : {}; } catch (e) { /* ignore */ }
+    if (!res.ok) throw new Error((data.error && data.error.message) || ('上传失败 HTTP ' + res.status));
+    return data;
+  }
   deleteConversation(id) {
     return this.request('/v1/conversations/' + encodeURIComponent(id), { method: 'DELETE' });
   }
