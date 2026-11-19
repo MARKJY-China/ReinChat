@@ -531,8 +531,9 @@ export default {
       let images = [];
       try {
         images = await Promise.all(previews.map(async (item) => {
+          const size = await this.imageDimensions(item.file);
           const uploaded = await this.api.uploadFile(item.file);
-          return { id: uploaded.id, remoteId: uploaded.id, mimeType: uploaded.mimeType, width: 0, height: 0, url: item.url };
+          return { id: uploaded.id, remoteId: uploaded.id, mimeType: uploaded.mimeType, width: size.width, height: size.height, url: item.url };
         }));
       } catch (e) { this.authError = '图片上传失败：' + e.message; return; }
       this.sendText(text || (pdf ? '请阅读并分析这份 PDF。' : '请分析这张图片。'), false, pdf, images);
@@ -552,6 +553,15 @@ export default {
       if (event.target && event.target.closest && event.target.closest('.composer')) return;
       const files = event.clipboardData ? Array.from(event.clipboardData.files || []) : [];
       if (files.length) { event.preventDefault(); this.handlePastedFiles(files); }
+    },
+    imageDimensions(file) {
+      return new Promise((resolve) => {
+        const url = URL.createObjectURL(file);
+        const image = new Image();
+        image.onload = () => { resolve({ width: image.naturalWidth || 1, height: image.naturalHeight || 1 }); URL.revokeObjectURL(url); };
+        image.onerror = () => { resolve({ width: 1, height: 1 }); URL.revokeObjectURL(url); };
+        image.src = url;
+      });
     },
     async handlePastedFiles(files) {
       for (const file of files) {
