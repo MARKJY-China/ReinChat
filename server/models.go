@@ -53,16 +53,18 @@ type SourceDTO struct {
 }
 
 type MessageSegment struct {
-	Type    string `json:"type"`
-	Text    string `json:"text,omitempty"`
-	Name    string `json:"name,omitempty"`
-	Label   string `json:"label,omitempty"`
-	Status  string `json:"status,omitempty"`
-	Detail  string `json:"detail,omitempty"`
-	CallID  string `json:"callId,omitempty"`
-	Query   string `json:"query,omitempty"`
-	URL     string `json:"url,omitempty"`
-	Summary string `json:"summary,omitempty"`
+	Type      string `json:"type"`
+	Text      string `json:"text,omitempty"`
+	Name      string `json:"name,omitempty"`
+	Label     string `json:"label,omitempty"`
+	Status    string `json:"status,omitempty"`
+	Detail    string `json:"detail,omitempty"`
+	CallID    string `json:"callId,omitempty"`
+	Query     string `json:"query,omitempty"`
+	URL       string `json:"url,omitempty"`
+	Summary   string `json:"summary,omitempty"`
+	StartedAt int64  `json:"startedAt,omitempty"`
+	EndedAt   int64  `json:"endedAt,omitempty"`
 }
 
 type MessageDTO struct {
