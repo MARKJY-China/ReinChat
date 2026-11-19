@@ -470,7 +470,7 @@ export default {
       this.$set(this.conversationCache, conversation.id, conversation);
       const now = Date.now();
       if (!retry) conversation.messages.push({ id: uuid(), role: 'user', content: text, images: [], createdAt: now, status: 'COMPLETE', error: null });
-      const assistant = { id: uuid(), role: 'assistant', content: '', reasoning: '', model: this.model, toolCalls: [], images: [], createdAt: now + 1, status: 'COMPLETE', error: null, streaming: true };
+      const assistant = { id: uuid(), role: 'assistant', content: '', reasoning: '', segments: [], model: this.model, toolCalls: [], images: [], createdAt: now + 1, status: 'COMPLETE', error: null, streaming: true };
       conversation.messages.push(assistant);
       const controller = new AbortController();
       this.$set(this.streams, conversation.id, { assistantId: assistant.id, phase: 'waiting', controller, cancelled: false });
@@ -524,6 +524,26 @@ export default {
       if (this.activeId === conversation.id) this.active.title = conversation.title;
       await this.persist(conversation);
     },
+    appendReasoning(assistant, text) {
+      if (!text) return;
+      if (!assistant.segments) this.$set(assistant, 'segments', []);
+      const last = assistant.segments[assistant.segments.length - 1];
+      if (last && last.type === 'reasoning') last.text += text;
+      else assistant.segments.push({ type: 'reasoning', text });
+      assistant.reasoning = (assistant.reasoning || '') + text;
+    },
+    upsertTool(assistant, name, status, detail) {
+      if (!assistant.segments) this.$set(assistant, 'segments', []);
+      const label = name === 'web_search' ? '正在搜索网页' : name === 'fetch_url' ? '正在浏览网页' : '正在使用工具';
+      let segment = assistant.segments.slice().reverse().find((s) => s.type === 'tool' && s.name === name && s.status === 'running');
+      if (!segment) {
+        segment = { type: 'tool', name, label, status: 'running', detail: '' };
+        assistant.segments.push(segment);
+      }
+      segment.status = status;
+      if (detail) segment.detail = String(detail).slice(0, 4000);
+      if (status === 'done') segment.label = name === 'web_search' ? '搜索网页' : name === 'fetch_url' ? '浏览网页' : name;
+    },
     async responseError(res, label) {
       const raw = await res.text();
       let detail = raw;
@@ -555,11 +575,12 @@ export default {
           const event = JSON.parse(data);
           if (event.type === 'snapshot') {
             if (event.text) { assistant.content = event.text; stream.phase = 'streaming'; }
-            if (event.reasoning) assistant.reasoning = event.reasoning;
+            if (event.reasoning && (!assistant.segments || !assistant.segments.length)) this.appendReasoning(assistant, event.reasoning);
             if (event.error) throw new Error(String(event.error).slice(0, 4000));
           }
           if (event.type === 'delta') { assistant.content += event.text || ''; stream.phase = 'streaming'; }
-          if (event.type === 'reasoning') { assistant.reasoning += event.text || ''; stream.phase = 'streaming'; }
+          if (event.type === 'reasoning') { this.appendReasoning(assistant, event.text || ''); stream.phase = 'streaming'; }
+          if (event.type === 'tool') { this.upsertTool(assistant, event.tool || '', event.status || 'running', event.detail); }
           if (event.type === 'error') throw new Error((event.error || 'relay failed') + (event.status ? '（' + event.status + '）' : ''));
           if (event.type === 'status' && (event.status === 'failed' || event.status === 'cancelled')) {
             throw new Error(event.error || (event.status === 'cancelled' ? '生成已取消' : '生成失败'));
@@ -586,9 +607,15 @@ export default {
           const event = JSON.parse(data);
           if (name === 'frame' && event.type === 'chunk' && event.chunk) {
             if (event.chunk.type === 'text-delta') { assistant.content += event.chunk.text || ''; stream.phase = 'streaming'; }
-            if (event.chunk.type === 'reasoning-delta') { assistant.reasoning += event.chunk.text || ''; stream.phase = 'streaming'; }
+            if (event.chunk.type === 'reasoning-delta') { this.appendReasoning(assistant, event.chunk.text || ''); stream.phase = 'streaming'; }
           }
-          if (name === 'event' && event.type === 'tool/call') (assistant.toolCalls = assistant.toolCalls || []).push({ callId: String(event.data?.callId || ''), name: String(event.data?.name || 'tool'), status: 'running' });
+          if (name === 'event' && event.type === 'tool/call') {
+            (assistant.toolCalls = assistant.toolCalls || []).push({ callId: String(event.data?.callId || ''), name: String(event.data?.name || 'tool'), status: 'running' });
+            this.upsertTool(assistant, String(event.data?.name || 'tool'), 'running', '');
+          }
+          if (name === 'event' && event.type === 'tool/result') {
+            this.upsertTool(assistant, String(event.data?.name || 'tool'), 'done', (event.data?.message?.content || []).map((b) => b.text || '').join(''));
+          }
           if (name === 'done') return;
           if (name === 'error') throw new Error((event.message || 'DSH failed') + (event.stderr ? '\n' + String(event.stderr).slice(-2000) : ''));
         }

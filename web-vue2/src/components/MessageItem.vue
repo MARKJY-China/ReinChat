@@ -4,17 +4,24 @@
       <span class="who">{{ message.role === 'user' ? '你' : (message.model || 'ReinChat') }}</span>
       <time>{{ formatTime(message.createdAt) }}</time>
     </div>
-    <details class="thinking" v-if="message.reasoning">
+    <div class="process" v-if="segments.length">
+      <template v-for="(segment, index) in segments" :key="index">
+        <details v-if="segment.type === 'reasoning'" class="thinking">
+          <summary>{{ index === 0 ? '思考过程' : '继续思考' }}</summary>
+          <pre>{{ segment.text }}</pre>
+        </details>
+        <div v-else class="tool-card" :class="segment.status">
+          <span class="tool-dot"></span>
+          <span>{{ segment.label }}</span>
+          <span class="tool-state">{{ segment.status === 'running' ? '进行中' : (segment.status === 'failed' ? '失败' : '完成') }}</span>
+          <details v-if="segment.detail"><summary>结果</summary><pre>{{ segment.detail }}</pre></details>
+        </div>
+      </template>
+    </div>
+    <details class="thinking" v-else-if="message.reasoning">
       <summary>思考过程</summary>
       <pre>{{ message.reasoning }}</pre>
     </details>
-    <div class="tool-stack" v-if="message.toolCalls && message.toolCalls.length">
-      <div v-for="tool in message.toolCalls" :key="tool.callId || tool.name" class="tool-card" :class="tool.status">
-        <span class="tool-dot"></span><span>{{ tool.name }}</span>
-        <span class="tool-state">{{ tool.status === 'running' ? '运行中' : (tool.status === 'failed' ? '失败' : '完成') }}</span>
-        <details v-if="tool.detail"><summary>结果</summary><pre>{{ tool.detail }}</pre></details>
-      </div>
-    </div>
     <div class="prose" v-html="html"></div>
     <div class="stream-line" v-if="message.streaming"><span></span>{{ streamPhase === 'streaming' ? 'AI 正在输出' : '请求服务端中' }}<button class="stream-stop" @click="$emit('stop')">停止</button></div>
     <div class="turn-error" v-if="message.error">
@@ -36,7 +43,13 @@ export default {
   name: 'MessageItem',
   props: { message: { type: Object, required: true }, streaming: Boolean, streamPhase: { type: String, default: '' } },
   data() { return { copied: false }; },
-  computed: { html() { return renderMarkdown(this.message.content); } },
+  computed: {
+    html() { return renderMarkdown(this.message.content); },
+    segments() {
+      if (this.message.segments && this.message.segments.length) return this.message.segments;
+      return [];
+    },
+  },
   methods: {
     formatTime(ms) {
       if (!ms) return '';

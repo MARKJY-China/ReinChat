@@ -42,6 +42,8 @@ type relayEvent struct {
 	Reasoning string `json:"reasoning,omitempty"`
 	Status    string `json:"status,omitempty"`
 	Error     string `json:"error,omitempty"`
+	Tool      string `json:"tool,omitempty"`
+	Detail    string `json:"detail,omitempty"`
 }
 
 type relayHub struct {

@@ -188,6 +188,8 @@ a { color: inherit; }
 .prose table { width: 100%; border-collapse: collapse; font-size: 12px; }
 .prose th, .prose td { border: 1px solid var(--line); padding: 7px 9px; text-align: left; }
 .prose th { background: #f3f1eb; font-weight: 600; }
+.process { display: flex; flex-direction: column; gap: 6px; margin: 4px 0 10px; }
+.process .thinking, .process .tool-card { margin: 0; }
 .thinking { margin: 4px 0 10px; color: var(--muted); font-size: 11px; }
 .thinking summary { cursor: pointer; color: #9a958b; }
 .thinking pre { white-space: pre-wrap; margin: 8px 0 0; padding: 10px 12px; border-left: 2px solid #ddd8cd; color: #7a766d; font: 11px/1.65 inherit; }

@@ -228,6 +228,9 @@ func cleanDSMLText(raw string) string {
 	raw = dsmlParamTag.ReplaceAllString(raw, "")
 	raw = dsmlAnyTag.ReplaceAllString(raw, "")
 	raw = strings.ReplaceAll(raw, "\r\n", "\n")
+	raw = regexp.MustCompile(`(?m)^\s*<\s*$`).ReplaceAllString(raw, "")
+	raw = strings.TrimSpace(raw)
+	raw = strings.TrimSuffix(raw, "<")
 	return strings.TrimSpace(raw)
 }
 
@@ -318,9 +321,12 @@ func (s *Server) streamAgentAnswerDepth(ctx context.Context, jobID string, p *re
 		messages = append(messages, assistant)
 		for _, call := range calls {
 			s.relay.publish(jobID, relayEvent{Type: "status", Status: "tools"})
+			s.relay.publish(jobID, relayEvent{Type: "tool", Tool: call.Function.Name, Detail: call.Function.Arguments, Status: "running"})
+			result := s.runAgentTool(ctx, call.Function.Name, call.Function.Arguments)
+			s.relay.publish(jobID, relayEvent{Type: "tool", Tool: call.Function.Name, Detail: result, Status: "done"})
 			messages = append(messages, map[string]any{
 				"role": "tool", "tool_call_id": call.ID,
-				"content": s.runAgentTool(ctx, call.Function.Name, call.Function.Arguments),
+				"content": result,
 			})
 		}
 		return s.streamAgentAnswerDepth(ctx, jobID, p, messages, model, effort, depth+1)
