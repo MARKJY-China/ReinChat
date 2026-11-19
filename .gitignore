@@ -66,3 +66,7 @@ desktop/src-tauri/target/
 agent-gateway/workspaces/
 agent-gateway/node_modules/
 agent-gateway/.dsh-home/
+
+# Vue2 SFC frontend build output
+web-vue2/node_modules/
+web-vue2/dist/
