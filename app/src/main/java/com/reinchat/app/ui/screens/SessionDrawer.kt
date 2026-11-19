@@ -46,6 +46,7 @@ import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.LightMode
 import androidx.compose.material.icons.rounded.MoreHoriz
+import androidx.compose.material.icons.rounded.PushPin
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material3.Icon
@@ -63,6 +64,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
@@ -107,6 +109,15 @@ fun SessionDrawerOverlay(
     var deleteTarget by remember { mutableStateOf<Conversation?>(null) }
     var renameText by remember { mutableStateOf("") }
     val themeControl = LocalReinThemeControl.current
+    val context = LocalContext.current
+    val pinPrefs = remember { context.getSharedPreferences("reinchat_pins", 0) }
+    var pinnedIds by remember {
+        mutableStateOf(pinPrefs.getStringSet("ids", emptySet()).orEmpty())
+    }
+    fun togglePin(id: String) {
+        pinnedIds = if (id in pinnedIds) pinnedIds - id else pinnedIds + id
+        pinPrefs.edit().putStringSet("ids", pinnedIds).apply()
+    }
 
     LaunchedEffect(visible) {
         if (!visible) {
@@ -235,8 +246,8 @@ fun SessionDrawerOverlay(
                         } else null,
                     )
 
-                    val filtered = remember(conversations, query) {
-                        if (query.isBlank()) conversations
+                    val filtered = remember(conversations, query, pinnedIds) {
+                        val base = if (query.isBlank()) conversations
                         else {
                             val needle = query.trim().lowercase(Locale.getDefault())
                             conversations.filter { conversation ->
@@ -246,6 +257,7 @@ fun SessionDrawerOverlay(
                                     }
                             }
                         }
+                        base.sortedWith(compareByDescending<Conversation> { it.id in pinnedIds }.thenByDescending { it.updatedAt })
                     }
 
                     Spacer(Modifier.height(18.dp))
@@ -310,6 +322,8 @@ fun SessionDrawerOverlay(
                                         expandedMenuId = null
                                         deleteTarget = conversation
                                     },
+                                    pinned = conversation.id in pinnedIds,
+                                    onTogglePin = { togglePin(conversation.id) },
                                     modifier = Modifier.animateItem(),
                                 )
                             }
@@ -487,6 +501,8 @@ private fun ConversationRow(
     onToggleActions: () -> Unit,
     onRename: () -> Unit,
     onDelete: () -> Unit,
+    pinned: Boolean,
+    onTogglePin: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val background by animateColorAsState(
@@ -528,6 +544,16 @@ private fun ConversationRow(
                     .padding(top = 1.dp),
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (pinned) {
+                        Icon(
+                            imageVector = Icons.Rounded.PushPin,
+                            contentDescription = null,
+                            tint = ReinColors.Mint.copy(alpha = 0.9f),
+                            modifier = Modifier
+                                .padding(end = 4.dp)
+                                .size(10.dp),
+                        )
+                    }
                     if (conversation.cloud) {
                         Icon(
                             imageVector = Icons.Rounded.Cloud,
@@ -590,6 +616,12 @@ private fun ConversationRow(
                     icon = Icons.Rounded.Edit,
                     tint = ReinColors.TextSecondary,
                     onClick = onRename,
+                )
+                InlineAction(
+                    label = if (pinned) "取消置顶" else "置顶",
+                    icon = Icons.Rounded.PushPin,
+                    tint = ReinColors.TextSecondary,
+                    onClick = onTogglePin,
                 )
                 InlineAction(
                     label = "删除",

@@ -714,7 +714,7 @@ private fun ProviderCard(
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
                 text = buildString {
-                    append(provider.activeModel.ifBlank { "未填写模型" })
+                    append(provider.modelLabels[provider.activeModel] ?: provider.activeModel.ifBlank { "未填写模型" })
                     if (provider.modelOptions.size > 1) {
                         append("  +${provider.modelOptions.size - 1}")
                     }

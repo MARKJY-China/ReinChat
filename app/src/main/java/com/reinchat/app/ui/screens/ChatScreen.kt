@@ -297,7 +297,7 @@ fun ChatScreen(
                 ) {
                     EmptyChat(
                         providerConfigured = provider != null,
-                        providerLabel = provider?.let { "${it.name} · ${it.activeModel}" },
+                        providerLabel = provider?.let { "${it.name} · ${it.modelLabels[it.activeModel] ?: it.activeModel}" },
                         cloudAvailable = state.isLoggedIn,
                         cloudEnabled = state.isLoggedIn && state.newChatCloud,
                         onCloudChange = onSetNewChatCloud,
@@ -466,7 +466,7 @@ fun ChatScreen(
                     pdfBusy = state.pdfBusy,
                     pdfError = state.pdfError,
                     editing = state.editingMessageId != null,
-                    providerLabel = provider?.let { it.activeModel.ifBlank { it.name } },
+                    providerLabel = provider?.let { it.modelLabels[it.activeModel] ?: it.activeModel.ifBlank { it.name } },
                     webSearch = state.webSearch,
                     searchAvailable = (state.account?.level ?: 1) >= 2,
                     relayMode = (state.account?.level ?: 1) >= 2,
@@ -746,6 +746,7 @@ private fun ProviderPickerDialog(
             ) {
                 activeProvider.modelOptions.forEach { model ->
                     val selected = model == activeModel
+                    val modelLabel = activeProvider.modelLabels[model] ?: model
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -758,7 +759,7 @@ private fun ProviderPickerDialog(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Text(
-                            text = model,
+                            text = modelLabel,
                             style = MaterialTheme.typography.bodyMedium,
                             color = if (selected) ReinColors.Mint else ReinColors.TextSecondary,
                             maxLines = 1,
