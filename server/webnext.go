@@ -30,6 +30,7 @@ func (s *Server) serveWebNext(w http.ResponseWriter, r *http.Request) {
 		// SPA routes fall back to the shell.
 		if !strings.Contains(path.Base(relative), ".") {
 			data, err = fs.ReadFile(webNextFS, "webnext/index.html")
+			relative = "/index.html"
 		}
 	}
 	if err != nil {
@@ -37,6 +38,7 @@ func (s *Server) serveWebNext(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", contentTypeFor(relative))
+	w.Header().Set("Content-Disposition", "inline")
 	_, _ = w.Write(data)
 }
 
