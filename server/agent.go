@@ -100,6 +100,10 @@ func (s *Server) runRelaySearchAgent(ctx context.Context, jobID string, p *relay
 		return true
 	}
 
+	decisionReasoning := cleanDSMLText(choice.Reasoning)
+	if decisionReasoning != "" {
+		publishTextChunks(ctx, s, jobID, "reasoning", decisionReasoning)
+	}
 	assistant := map[string]any{"role": "assistant", "content": content}
 	callPayload := make([]map[string]any, 0, len(calls))
 	for _, call := range calls {

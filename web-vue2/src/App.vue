@@ -526,23 +526,25 @@ export default {
     },
     appendReasoning(assistant, text) {
       if (!text) return;
-      if (!assistant.segments) this.$set(assistant, 'segments', []);
-      const last = assistant.segments[assistant.segments.length - 1];
+      const segments = (assistant.segments || []).slice();
+      const last = segments[segments.length - 1];
       if (last && last.type === 'reasoning') last.text += text;
-      else assistant.segments.push({ type: 'reasoning', text });
+      else segments.push({ type: 'reasoning', text });
+      this.$set(assistant, 'segments', segments);
       assistant.reasoning = (assistant.reasoning || '') + text;
     },
     upsertTool(assistant, name, status, detail) {
-      if (!assistant.segments) this.$set(assistant, 'segments', []);
+      const segments = (assistant.segments || []).slice();
       const label = name === 'web_search' ? '正在搜索网页' : name === 'fetch_url' ? '正在浏览网页' : '正在使用工具';
-      let segment = assistant.segments.slice().reverse().find((s) => s.type === 'tool' && s.name === name && s.status === 'running');
+      let segment = segments.slice().reverse().find((s) => s.type === 'tool' && s.name === name && s.status === 'running');
       if (!segment) {
         segment = { type: 'tool', name, label, status: 'running', detail: '' };
-        assistant.segments.push(segment);
+        segments.push(segment);
       }
       segment.status = status;
       if (detail) segment.detail = String(detail).slice(0, 4000);
       if (status === 'done') segment.label = name === 'web_search' ? '搜索网页' : name === 'fetch_url' ? '浏览网页' : name;
+      this.$set(assistant, 'segments', segments);
     },
     async responseError(res, label) {
       const raw = await res.text();
