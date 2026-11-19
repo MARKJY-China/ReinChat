@@ -232,28 +232,6 @@ private data class RelayRequestDto(
 private data class RelayJobDto(val id: String = "", val status: String = "")
 
 @Serializable
-private data class RelayToolDto(
-    val type: String = "tool",
-    val tool: String = "",
-    val name: String = "",
-    val status: String = "running",
-    val detail: String = "",
-)
-
-@Serializable
-private data class RelayEventDto(
-    val type: String = "",
-    val text: String = "",
-    val reasoning: String = "",
-    val status: String = "",
-    val error: String = "",
-    val tool: String = "",
-    val name: String = "",
-    val detail: String = "",
-    val tools: List<RelayToolDto> = emptyList(),
-)
-
-@Serializable
 private data class ConversationTitleRequest(
     val providerId: String,
     val model: String,
@@ -275,6 +253,8 @@ class CloudApiClient {
         ignoreUnknownKeys = true
         encodeDefaults = true
     }
+
+    private val relayParser = RelayEventParser(json)
 
     private val client = OkHttpClient.Builder()
         .connectTimeout(20, TimeUnit.SECONDS)
@@ -407,79 +387,26 @@ class CloudApiClient {
                     val line = source.readUtf8Line() ?: break
                     if (line.isEmpty()) {
                         if (data.isNotEmpty()) {
-                            val event = runCatching {
-                                json.decodeFromString<RelayEventDto>(data.toString())
-                            }.getOrNull()
+                            val frame = relayParser.parse(data.toString())
                             data.clear()
-                            if (event != null) {
-                                when (event.type) {
-                                    "snapshot" -> {
-                                        event.tools.forEach { tool ->
-                                            val name = tool.tool.ifBlank { tool.name }
-                                            if (name.isNotBlank()) {
-                                                emit(
-                                                    StreamEvent.Tool(
-                                                        name = name,
-                                                        status = tool.status.ifBlank { "running" },
-                                                        detail = tool.detail,
-                                                    )
-                                                )
-                                            }
-                                        }
-                                        if (event.text.isNotEmpty()) emit(StreamEvent.Delta(event.text))
-                                        if (event.reasoning.isNotEmpty()) {
-                                            emit(StreamEvent.Reasoning(event.reasoning))
-                                        }
-                                    }
-                                    "delta" -> if (event.text.isNotEmpty()) emit(StreamEvent.Delta(event.text))
-                                    "reasoning" -> if (event.text.isNotEmpty()) {
-                                        emit(StreamEvent.Reasoning(event.text))
-                                    }
-                                    "tool" -> {
-                                        val name = event.tool.ifBlank { event.name }
-                                        if (name.isNotBlank()) {
-                                            emit(
-                                                StreamEvent.Tool(
-                                                    name = name,
-                                                    status = event.status.ifBlank { "running" },
-                                                    detail = event.detail,
-                                                )
-                                            )
-                                        }
-                                    }
-                                    "error" -> throw CloudApiException(
-                                        "relay_error",
-                                        event.error.ifBlank { "服务端中转失败" },
-                                    )
-                                    "status" -> when (event.status) {
-                                        "completed" -> {
-                                            emit(StreamEvent.Completed)
-                                            return@flow
-                                        }
-                                        "cancelled" -> throw RelayCancelledException(
-                                            event.error.ifBlank { "生成已取消" }
-                                        )
-                                        "failed" -> throw CloudApiException(
-                                            "relay_error",
-                                            event.error.ifBlank { "服务端中转失败" },
-                                        )
+                            when (frame) {
+                                null -> Unit
+                                is RelayFrame.Events -> {
+                                    frame.events.forEach { emit(it) }
+                                    if (frame.terminal) {
+                                        emit(StreamEvent.Completed)
+                                        return@flow
                                     }
                                 }
-                                if (event.type == "snapshot" && event.status.isNotBlank()) {
-                                    when (event.status) {
-                                        "completed" -> {
-                                            emit(StreamEvent.Completed)
-                                            return@flow
-                                        }
-                                        "cancelled" -> throw RelayCancelledException(
-                                            event.error.ifBlank { "生成已取消" }
-                                        )
-                                        "failed" -> throw CloudApiException(
-                                            "relay_error",
-                                            event.error.ifBlank { "服务端中转失败" },
-                                        )
-                                    }
+                                RelayFrame.Finished -> {
+                                    emit(StreamEvent.Completed)
+                                    return@flow
                                 }
+                                RelayFrame.Cancelled -> throw RelayCancelledException()
+                                is RelayFrame.Failed -> throw CloudApiException(
+                                    "relay_error",
+                                    frame.message,
+                                )
                             }
                         }
                     } else if (line.startsWith("data:")) {
@@ -611,7 +538,13 @@ class CloudApiClient {
             .addFormDataPart("file", file.name, file.asRequestBody(mimeType.toMediaType()))
             .build()
         val request = authorized(account, "pdf/ocr").post(multipart).build()
-        val response = ocrClient.newCall(request).execute()
+        // Surface transport failures as a cloud error so the composer can say
+        // "OCR failed, attachment kept" instead of a generic parse failure.
+        val response = try {
+            ocrClient.newCall(request).execute()
+        } catch (e: IOException) {
+            throw CloudApiException("ocr_network", friendlyNetworkError(e))
+        }
         response.use {
             val text = response.body?.string().orEmpty()
             if (!response.isSuccessful) throw errorFor(response.code, text)
@@ -725,66 +658,6 @@ class CloudApiClient {
             .map(::messageDto),
     )
 
-    private fun messageDto(message: ChatMessage): CloudMessageDto = CloudMessageDto(
-        id = message.id,
-        role = message.role.name.lowercase(),
-        content = message.content,
-        reasoning = message.reasoning,
-        pdfName = message.pdfName,
-        pdfText = message.pdfText,
-        segments = message.segments.map(::segmentDto),
-        model = message.model,
-        images = message.images.map { image ->
-            CloudImageRefDto(
-                id = image.id,
-                remoteId = image.remoteId,
-                mimeType = image.mimeType,
-                width = image.width,
-                height = image.height,
-            )
-        },
-        createdAt = message.createdAt,
-        status = wireStatus(message.status),
-        error = message.error,
-    )
-
-    /**
-     * Relay jobs read image bytes from the server file store by [CloudImageRefDto.id],
-     * so the cloud file id must be used as the id there (same as the web client).
-     * Conversation sync keeps the local id and puts the cloud id in remoteId.
-     */
-    private fun relayMessageDto(message: ChatMessage): CloudMessageDto =
-        messageDto(message).copy(
-            images = message.images.map { image ->
-                val remote = image.remoteId?.takeIf { it.isNotBlank() }
-                CloudImageRefDto(
-                    id = remote ?: image.id,
-                    remoteId = remote,
-                    mimeType = image.mimeType,
-                    width = image.width,
-                    height = image.height,
-                )
-            },
-        )
-
-    private fun segmentDto(segment: MessageSegment): MessageSegmentDto = MessageSegmentDto(
-        type = segment.type,
-        text = segment.text,
-        name = segment.name,
-        label = segment.label,
-        status = segment.status,
-        detail = segment.detail,
-    )
-
-    /**
-     * The server only accepts COMPLETE/STOPPED/ERROR for stored messages.
-     * CANCELLED is the richer local/web status; it is stored as STOPPED.
-     */
-    private fun wireStatus(status: MessageStatus): String = when (status) {
-        MessageStatus.CANCELLED -> "STOPPED"
-        else -> status.name
-    }
-
     @Serializable
     private data class AuthRequest(val username: String, val password: String)
 
@@ -795,6 +668,67 @@ class CloudApiClient {
         private val JSON = "application/json; charset=utf-8".toMediaType()
         private val EMPTY = ByteArray(0).toRequestBody(null)
     }
+}
+
+/** Conversation-sync DTO: keeps the local image id and stores the cloud id in remoteId. */
+internal fun messageDto(message: ChatMessage): CloudMessageDto = CloudMessageDto(
+    id = message.id,
+    role = message.role.name.lowercase(),
+    content = message.content,
+    reasoning = message.reasoning,
+    pdfName = message.pdfName,
+    pdfText = message.pdfText,
+    segments = message.segments.map(::segmentDto),
+    model = message.model,
+    images = message.images.map { image ->
+        CloudImageRefDto(
+            id = image.id,
+            remoteId = image.remoteId,
+            mimeType = image.mimeType,
+            width = image.width,
+            height = image.height,
+        )
+    },
+    createdAt = message.createdAt,
+    status = wireStatus(message.status),
+    error = message.error,
+)
+
+/**
+ * Relay jobs read image bytes from the server file store by [CloudImageRefDto.id],
+ * so the cloud file id must be used as the id there (same as the web client).
+ * Conversation sync keeps the local id and puts the cloud id in remoteId.
+ */
+internal fun relayMessageDto(message: ChatMessage): CloudMessageDto =
+    messageDto(message).copy(
+        images = message.images.map { image ->
+            val remote = image.remoteId?.takeIf { it.isNotBlank() }
+            CloudImageRefDto(
+                id = remote ?: image.id,
+                remoteId = remote,
+                mimeType = image.mimeType,
+                width = image.width,
+                height = image.height,
+            )
+        },
+    )
+
+internal fun segmentDto(segment: MessageSegment): MessageSegmentDto = MessageSegmentDto(
+    type = segment.type,
+    text = segment.text,
+    name = segment.name,
+    label = segment.label,
+    status = segment.status,
+    detail = segment.detail,
+)
+
+/**
+ * The server only accepts COMPLETE/STOPPED/ERROR for stored messages.
+ * CANCELLED is the richer local/web status; it is stored as STOPPED.
+ */
+internal fun wireStatus(status: MessageStatus): String = when (status) {
+    MessageStatus.CANCELLED -> "STOPPED"
+    else -> status.name
 }
 
 fun ProviderDto.toLocalProvider(): ProviderConfig = ProviderConfig(

@@ -88,6 +88,22 @@ class ChatUiStateTest {
     }
 
     @Test
+    fun attachedPdfWithoutTextIsStillSendable() {
+        // Signed-out OCR fallback keeps the attachment with state EMPTY.
+        val pdf = PdfAttachment(
+            name = "scan.pdf",
+            text = "",
+            state = PdfAttachmentState.EMPTY,
+            error = "未检测到文字层。扫描件需要登录后使用云端 OCR；附件仍会随消息发送。",
+        )
+        val state = ChatUiState(pdfAttachment = pdf)
+        assertFalse(pdf.hasText)
+        assertFalse(pdf.busiest)
+        assertTrue(state.canSend)
+        assertEquals(PdfAttachmentState.EMPTY, state.pendingAttachments.single().state)
+    }
+
+    @Test
     fun settingsExposeScaleAndTheme() {
         val state = ChatUiState(
             settings = AppSettings(fontScale = 1.15f, themeMode = ThemeMode.DARK)

@@ -78,6 +78,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import com.reinchat.app.data.PdfAttachmentState
 import com.reinchat.app.data.PendingAttachment
 import com.reinchat.app.data.PendingAttachmentKind
 import com.reinchat.app.ui.theme.LiquidEase
@@ -207,6 +208,7 @@ fun Composer(
                 if (pdfBusy || pdfAttachment != null) {
                     PdfAttachmentChip(
                         name = pdfAttachment?.name,
+                        attachment = pdfAttachment,
                         busy = pdfBusy,
                         onRemove = onRemovePdf,
                     )
@@ -479,9 +481,38 @@ private fun AttachmentThumbnail(attachment: PendingAttachment, onRemove: () -> U
     }
 }
 
-/** Hairline PDF chip that also reports the extraction/OCR state. */
+/**
+ * Hairline PDF chip that reports the extraction / OCR state. A PDF without a
+ * text layer still stays attached: the chip says so and the message can be sent
+ * (the relay receives the file name, and the text when OCR succeeded).
+ */
 @Composable
-private fun PdfAttachmentChip(name: String?, busy: Boolean, onRemove: () -> Unit) {
+private fun PdfAttachmentChip(
+    name: String?,
+    attachment: PendingAttachment?,
+    busy: Boolean,
+    onRemove: () -> Unit,
+) {
+    val state = attachment?.state
+    val pages = attachment?.pages ?: 0
+    val pageSuffix = if (pages > 0) " · $pages 页" else ""
+    val statusText = when {
+        busy || state == PdfAttachmentState.PENDING || state == PdfAttachmentState.EXTRACTING ->
+            "正在提取文字…"
+
+        state == PdfAttachmentState.OCR_RUNNING -> "正在云端 OCR…"
+        state == PdfAttachmentState.READY && attachment?.ocrUsed == true -> "OCR 已完成$pageSuffix"
+        state == PdfAttachmentState.READY -> "已提取文字$pageSuffix"
+        state == PdfAttachmentState.EMPTY -> "无文字层 · 附件仍可发送"
+        state == PdfAttachmentState.FAILED -> "解析失败 · 附件仍可发送"
+        else -> "已附加"
+    }
+    val statusColor = when (state) {
+        PdfAttachmentState.EMPTY -> ReinColors.TextSecondary
+        PdfAttachmentState.FAILED -> ReinColors.Danger.copy(alpha = 0.9f)
+        PdfAttachmentState.OCR_RUNNING -> ReinColors.Mint.copy(alpha = 0.85f)
+        else -> ReinColors.TextTertiary
+    }
     val shape = RoundedCornerShape(8.dp)
     Row(
         modifier = Modifier
@@ -502,9 +533,11 @@ private fun PdfAttachmentChip(name: String?, busy: Boolean, onRemove: () -> Unit
                 overflow = TextOverflow.Ellipsis,
             )
             Text(
-                text = if (busy) "正在提取文字…" else "已附加",
+                text = statusText,
                 style = MaterialTheme.typography.labelMedium.copy(fontSize = 9.sp),
-                color = ReinColors.TextTertiary,
+                color = statusColor,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
         }
         if (busy) {

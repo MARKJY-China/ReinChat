@@ -23,6 +23,8 @@ import com.reinchat.app.data.PdfAttachmentState
 import com.reinchat.app.data.PdfImportException
 import com.reinchat.app.data.PdfStore
 import com.reinchat.app.data.PdfTextExtractor
+import com.reinchat.app.data.PdfTextPolicy
+import com.reinchat.app.data.ProcessTimeline
 import com.reinchat.app.data.ProviderConfig
 import com.reinchat.app.data.ProviderModel
 import com.reinchat.app.data.SecureVault
@@ -253,6 +255,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
      * Copies [uri] locally, tries a local text extraction and falls back to the
      * server OCR endpoint when the PDF has no usable text layer. The composer
      * state exposes progress through [ChatUiState.pdfBusy] / [ChatUiState.pdfError].
+     *
+     * The fallback decision itself lives in [PdfTextPolicy] so it is unit-tested
+     * and can be exercised by the debug OCR probe. When the user is signed out
+     * the attachment is still accepted and the UI explains that OCR needs login.
      */
     fun attachPdf(uri: Uri) {
         if (pdfJob?.isActive == true) {
@@ -278,48 +284,54 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     // server OCR fallback can still extract something.
                     Log.w(TAG, "Local PDF extraction failed", e)
                 }
-                var ocrUsed = false
+
                 val account = _state.value.account
+                val decision = PdfTextPolicy.decide(text, account != null)
+                var ocrUsed = false
                 val provisional = PdfAttachment(
                     uri = uri.toString(),
                     localPath = stored.file.absolutePath,
                     name = stored.name,
                     text = text,
                     pages = pages,
-                    state = when {
-                        text.isNotBlank() -> PdfAttachmentState.READY
-                        account != null -> PdfAttachmentState.OCR_RUNNING
-                        else -> PdfAttachmentState.EMPTY
-                    },
-                    error = if (text.isNotBlank()) null else "未检测到文字层",
+                    state = decision.pendingState,
+                    error = decision.message,
                 )
                 _state.update {
                     it.copy(
                         pdfAttachment = provisional,
                         pdfBusy = true,
-                        pdfError = if (text.isBlank() && account != null) {
-                            "未检测到文字层，正在云端 OCR…"
-                        } else null,
+                        pdfError = decision.message,
                     )
                 }
-                if (text.isBlank()) {
-                    if (account != null) {
-                        val ocr = withContext(Dispatchers.IO) {
-                            cloudApi.ocrPdf(account, stored.file, stored.mimeType)
-                        }
-                        text = ocr.text.trim()
-                        pages = if (ocr.pages > 0) ocr.pages else pages
-                        ocrUsed = true
-                    } else {
-                        notice("本地未能提取文字，登录后可使用云端 OCR")
-                    }
+                if (decision.blockedByLogin) {
+                    // Keep the attachment: the text field stays empty and `send`
+                    // is still allowed, but the UI explains why OCR is missing.
+                    notice("未检测到文字层：登录后可使用云端 OCR，附件仍可发送")
                 }
+                if (decision.needsServerOcr && account != null) {
+                    val ocr = withContext(Dispatchers.IO) {
+                        cloudApi.ocrPdf(account, stored.file, stored.mimeType)
+                    }
+                    text = ocr.text.trim()
+                    pages = if (ocr.pages > 0) ocr.pages else pages
+                    ocrUsed = text.isNotBlank()
+                }
+
                 val attachment = provisional.copy(
                     text = text,
                     pages = pages,
                     ocrUsed = ocrUsed,
-                    state = if (text.isBlank()) PdfAttachmentState.EMPTY else PdfAttachmentState.READY,
-                    error = if (text.isBlank()) "PDF 中没有可提取的文字（可能是扫描件）" else null,
+                    state = if (text.isBlank()) {
+                        PdfAttachmentState.EMPTY
+                    } else {
+                        PdfAttachmentState.READY
+                    },
+                    error = when {
+                        text.isNotBlank() -> null
+                        decision.needsServerOcr -> PdfTextPolicy.OCR_EMPTY_MESSAGE
+                        else -> decision.message
+                    },
                 )
                 _state.update {
                     it.copy(
@@ -343,8 +355,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             } catch (e: Throwable) {
                 Log.w(TAG, "PDF attach failed", e)
                 val message = when (e) {
-                    is CloudAuthException -> "登录已过期，无法使用云端 OCR"
-                    is CloudApiException -> e.message ?: "PDF OCR 失败"
+                    is CloudAuthException -> "登录已过期，无法使用云端 OCR；附件仍会随消息发送。"
+                    is CloudApiException -> PdfTextPolicy.ocrFailedMessage(e.message)
                     else -> "PDF 解析失败，请重试"
                 }
                 _state.update { state ->
@@ -469,7 +481,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
         val text = snapshot.draft.trim().ifBlank {
             when {
-                pdf != null -> "请阅读并分析这份 PDF。"
+                pdf != null && pdf.hasText -> "请阅读并分析这份 PDF。"
+                // Keep the attachment sendable even when OCR was unavailable,
+                // but never imply the model can read an empty text layer.
+                pdf != null -> "我附上了一份 PDF，但当前没有提取到文字（可能是扫描件），无法读取内容。"
                 snapshot.attachments.isNotEmpty() -> "请分析这张图片。"
                 else -> ""
             }
@@ -724,7 +739,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         streamJob = viewModelScope.launch {
             val received = StringBuilder()
             val receivedReasoning = StringBuilder()
-            val segments = mutableListOf<MessageSegment>()
+            val timeline = ProcessTimeline()
             var shownChars = 0
             var shownReasoningChars = 0
             var lastSave = System.currentTimeMillis()
@@ -734,13 +749,13 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             // that drains the buffers at an adaptive, frame-paced rate instead
             // of replacing the whole message on every network packet.
             fun publishVisibleText() {
-                if (shownChars <= 0 && shownReasoningChars <= 0 && segments.isEmpty()) return
+                if (shownChars <= 0 && shownReasoningChars <= 0 && timeline.isEmpty) return
                 updateStreamingContent(
                     conversationId = conversationId,
                     messageId = assistantId,
                     text = received.substring(0, shownChars),
                     reasoning = receivedReasoning.substring(0, shownReasoningChars),
-                    segments = segments.toList(),
+                    segments = timeline.segments,
                 )
             }
 
@@ -844,14 +859,37 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                         }
                         is StreamEvent.Reasoning -> {
                             receivedReasoning.append(event.text)
-                            appendReasoningSegment(segments, event.text)
+                            timeline.appendReasoning(event.text)
                             markStreamingPhase()
                             publishVisibleText()
                         }
                         is StreamEvent.Tool -> {
-                            upsertToolSegment(segments, event.name, event.status, event.detail)
+                            timeline.upsertTool(event.name, event.status, event.detail)
                             markStreamingPhase()
                             publishVisibleText()
+                        }
+                        is StreamEvent.Snapshot -> {
+                            // Job state replayed when the event stream opens.
+                            // Tool history is seeded in order; text/reasoning are
+                            // only applied when nothing arrived live yet, so a
+                            // reconnect never duplicates content.
+                            event.tools.forEach { tool ->
+                                timeline.upsertTool(tool.name, tool.status, tool.detail)
+                            }
+                            if (received.isEmpty() && event.text.isNotEmpty()) {
+                                received.append(event.text)
+                            }
+                            if (receivedReasoning.isEmpty() && event.reasoning.isNotEmpty()) {
+                                receivedReasoning.append(event.reasoning)
+                                timeline.seedReasoning(event.reasoning)
+                            }
+                            if (event.tools.isNotEmpty() ||
+                                received.isNotEmpty() ||
+                                event.reasoning.isNotEmpty()
+                            ) {
+                                markStreamingPhase()
+                                publishVisibleText()
+                            }
                         }
                         StreamEvent.Completed -> Unit
                     }
@@ -868,7 +906,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                         status = MessageStatus.ERROR,
                         content = "",
                         reasoning = receivedReasoning.toString(),
-                        segments = segments.toList(),
+                        segments = timeline.segments,
                         error = "服务商只返回了思考过程，没有生成正文",
                     )
                 } else {
@@ -878,7 +916,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                         status = MessageStatus.COMPLETE,
                         content = received.toString(),
                         reasoning = receivedReasoning.toString(),
-                        segments = segments.toList(),
+                        segments = timeline.segments,
                         error = null,
                     )
                 }
@@ -891,7 +929,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     status = MessageStatus.CANCELLED,
                     content = received.toString(),
                     reasoning = receivedReasoning.toString(),
-                    segments = segments.toList(),
+                    segments = timeline.segments,
                     error = null,
                 )
                 throw cancel
@@ -905,7 +943,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     status = if (cancelled) MessageStatus.CANCELLED else MessageStatus.ERROR,
                     content = received.toString(),
                     reasoning = receivedReasoning.toString(),
-                    segments = segments.toList(),
+                    segments = timeline.segments,
                     error = if (cancelled) null else friendlyStreamError(error),
                 )
             } finally {
@@ -967,53 +1005,6 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
         persistConversations()
         return updated
-    }
-
-    private fun appendReasoningSegment(
-        segments: MutableList<MessageSegment>,
-        text: String,
-    ) {
-        if (text.isEmpty()) return
-        val last = segments.lastOrNull()
-        if (last != null && last.type == MessageSegment.TYPE_REASONING) {
-            segments[segments.size - 1] = last.copy(text = last.text + text)
-        } else {
-            segments += MessageSegment.reasoning(text)
-        }
-    }
-
-    private fun upsertToolSegment(
-        segments: MutableList<MessageSegment>,
-        name: String,
-        status: String,
-        detail: String,
-    ) {
-        val toolName = name.ifBlank { "tool" }
-        val normalizedStatus = status.ifBlank { MessageSegment.TOOL_STATUS_RUNNING }
-        val label = toolSegmentLabel(toolName, normalizedStatus)
-        val index = segments.indexOfLast {
-            it.type == MessageSegment.TYPE_TOOL &&
-                it.name == toolName &&
-                it.status == MessageSegment.TOOL_STATUS_RUNNING
-        }
-        if (index >= 0) {
-            val existing = segments[index]
-            segments[index] = existing.copy(
-                status = normalizedStatus,
-                label = label,
-                detail = detail.take(4000).ifBlank { existing.detail },
-            )
-        } else {
-            segments += MessageSegment.tool(toolName, normalizedStatus, detail, label)
-        }
-    }
-
-    private fun toolSegmentLabel(name: String, status: String): String = when (name) {
-        "web_search" ->
-            if (status == MessageSegment.TOOL_STATUS_RUNNING) "正在搜索网页" else "搜索网页"
-        "fetch_url" ->
-            if (status == MessageSegment.TOOL_STATUS_RUNNING) "正在浏览网页" else "浏览网页"
-        else -> name
     }
 
     private fun updateStreamingContent(

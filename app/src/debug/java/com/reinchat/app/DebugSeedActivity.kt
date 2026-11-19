@@ -7,6 +7,7 @@ import com.reinchat.app.data.ApiProtocol
 import com.reinchat.app.data.AppSettings
 import com.reinchat.app.data.ChatImage
 import com.reinchat.app.data.ChatMessage
+import com.reinchat.app.data.CloudAccount
 import com.reinchat.app.data.Conversation
 import com.reinchat.app.data.ConversationStore
 import com.reinchat.app.data.MessageRole
@@ -14,6 +15,7 @@ import com.reinchat.app.data.MessageSegment
 import com.reinchat.app.data.ProviderConfig
 import com.reinchat.app.data.SecureVault
 import com.reinchat.app.data.SettingsStore
+import com.reinchat.app.net.CloudEndpoint
 import kotlinx.coroutines.runBlocking
 import java.io.File
 import java.time.LocalDate
@@ -31,6 +33,15 @@ class DebugSeedActivity : ComponentActivity() {
             runBlocking {
                 settingsStore.save(AppSettings(cloudServerUrl = "http://127.0.0.1:8080"))
             }
+            startActivity(
+                Intent(this, MainActivity::class.java)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+            )
+            finish()
+            return
+        }
+        if (intent.getBooleanExtra("demo_cloud", false)) {
+            seedDemoCloud(settingsStore)
             startActivity(
                 Intent(this, MainActivity::class.java)
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
@@ -138,15 +149,17 @@ class DebugSeedActivity : ComponentActivity() {
                             detail = "液态玻璃设计原则\n1. 透：保留底层色彩\n2. 折：高光与内阴影\n3. 动：连续的空间过渡",
                             label = "搜索网页",
                         ),
+                        MessageSegment.reasoning("搜索结果确认了这三层，再找一个具体案例验证。"),
                         MessageSegment.tool(
                             name = "fetch_url",
                             status = MessageSegment.TOOL_STATUS_FAILED,
                             detail = "读取 https://example.com/glass 失败：连接超时（10s）",
                             label = "浏览网页",
                         ),
-                        MessageSegment.reasoning("搜索确认了这三个层次，可以按「透、折、动」组织回答。"),
-                    ),
-                    createdAt = now + 1_000,
+                        MessageSegment.reasoning(
+                            "网页打不开，回到 PDF 和搜索结果，按「透、折、动」三个层次组织回答。"
+                        ),
+                    ),                    createdAt = now + 1_000,
                 ),
             ),
         )
@@ -205,5 +218,45 @@ class DebugSeedActivity : ComponentActivity() {
         )
 
         return listOf(first, second, third)
+    }
+
+    /**
+     * Signs the debug build into a local mock server so the OCR probe can drive
+     * the real relay/OCR code path without a production account.
+     */
+    private fun seedDemoCloud(settingsStore: SettingsStore) {
+        val raw = intent.getStringExtra("cloud_server")?.trim()
+            .takeUnless { it.isNullOrBlank() } ?: "http://10.0.2.2:8787"
+        val normalized = runCatching { CloudEndpoint.normalize(raw) }
+            .getOrElse { "http://10.0.2.2:8787/api/v1" }
+        val origin = normalized.removeSuffix("/api/v1")
+        val account = CloudAccount(
+            username = "probe",
+            serverUrl = normalized,
+            token = "probe-token",
+            expiresAt = System.currentTimeMillis() + 7L * 24 * 60 * 60 * 1000,
+            level = 2,
+        )
+        val provider = ProviderConfig(
+            id = "probe-provider",
+            name = "Probe Provider",
+            protocol = ApiProtocol.CHAT_COMPLETIONS,
+            baseUrl = "$origin/v1",
+            apiKey = "sk-probe",
+            model = "probe-model",
+            selectedModel = "probe-model",
+            localOnly = true,
+        )
+        runBlocking {
+            settingsStore.save(
+                AppSettings(
+                    providers = listOf(provider),
+                    activeProviderId = provider.id,
+                    cloudAccount = if (intent.getBooleanExtra("no_cloud", false)) null else account,
+                    cloudServerUrl = normalized,
+                )
+            )
+            ConversationStore(application).save(emptyList())
+        }
     }
 }

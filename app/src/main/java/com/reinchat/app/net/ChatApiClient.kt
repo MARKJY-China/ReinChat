@@ -37,6 +37,17 @@ sealed interface StreamEvent {
     data class Delta(val text: String) : StreamEvent
     data class Reasoning(val text: String) : StreamEvent
     data class Tool(val name: String, val status: String, val detail: String) : StreamEvent
+
+    /**
+     * Full job state replayed by the relay when the event stream is opened:
+     * the text/reasoning received so far plus every tool call of the job.
+     */
+    data class Snapshot(
+        val text: String,
+        val reasoning: String,
+        val tools: List<Tool>,
+    ) : StreamEvent
+
     data object Completed : StreamEvent
 }
 
@@ -253,16 +264,7 @@ class ChatApiClient(private val imageStore: ImageStore) {
      * Direct-provider parity with the relay server: PDF text is inlined into the
      * message content because chat-completion APIs do not accept a PDF part.
      */
-    private fun messageText(message: ChatMessage): String {
-        if (message.pdfText.isBlank()) return message.content
-        val name = message.pdfName.ifBlank { "文档.pdf" }
-        val base = message.content.trimEnd()
-        return if (base.isBlank()) {
-            "[附件 PDF：$name]\n${message.pdfText}"
-        } else {
-            "$base\n\n[附件 PDF：$name]\n${message.pdfText}"
-        }
-    }
+    private fun messageText(message: ChatMessage): String = directMessageText(message)
 
     private sealed interface Parsed {
         data class Reasoning(val text: String) : Parsed
@@ -446,8 +448,22 @@ class ChatApiClient(private val imageStore: ImageStore) {
     private fun JsonElement.jsonPrimitiveOrNull(): JsonPrimitive? = this as? JsonPrimitive
 }
 
-internal fun friendlyNetworkError(error: Throwable): String = when (error) {
-    is UnknownHostException -> "无法连接服务器，请检查 Base URL 和网络"
+/**
+ * Direct-provider parity with the relay server: PDF text is inlined into the
+ * message content because chat-completion APIs do not accept a PDF part.
+ */
+internal fun directMessageText(message: ChatMessage): String {
+    if (message.pdfText.isBlank()) return message.content
+    val name = message.pdfName.ifBlank { "文档.pdf" }
+    val base = message.content.trimEnd()
+    return if (base.isBlank()) {
+        "[附件 PDF：$name]\n${message.pdfText}"
+    } else {
+        "$base\n\n[附件 PDF：$name]\n${message.pdfText}"
+    }
+}
+
+internal fun friendlyNetworkError(error: Throwable): String = when (error) {    is UnknownHostException -> "无法连接服务器，请检查 Base URL 和网络"
     is ConnectException -> "连接被拒绝，请检查 Base URL、端口或服务是否已启动"
     is NoRouteToHostException -> "无法路由到服务器，请检查网络连接"
     is SocketTimeoutException -> "连接超时，请稍后重试"

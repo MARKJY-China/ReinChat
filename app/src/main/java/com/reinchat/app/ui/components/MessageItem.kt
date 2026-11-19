@@ -73,6 +73,10 @@ import com.reinchat.app.data.ChatMessage
 import com.reinchat.app.data.MessageRole
 import com.reinchat.app.data.MessageSegment
 import com.reinchat.app.data.MessageStatus
+import com.reinchat.app.data.PROCESS_LABEL_THINKING_ACTIVE
+import com.reinchat.app.data.PROCESS_LABEL_THINKING_DONE
+import com.reinchat.app.data.normalizeToolStatus
+import com.reinchat.app.data.thinkingSegmentLabel
 import com.reinchat.app.ui.theme.LiquidEase
 import com.reinchat.app.ui.theme.LiquidEaseInOut
 import com.reinchat.app.ui.theme.LiquidEaseOutSoft
@@ -362,6 +366,7 @@ private fun AssistantMessage(
                 messageId = message.id,
                 segments = segments,
                 isStreaming = isStreaming,
+                hasContent = hasContent,
             )
             if (hasContent || isStreaming) Spacer(Modifier.height(10.dp))
         } else if (message.reasoning.isNotBlank()) {
@@ -406,8 +411,8 @@ private fun AssistantMessage(
             }
         }
 
-        if (isStreaming) {
-            StreamPhaseLine(phase = streamPhase)
+        if (isStreaming && (hasContent || segments.isEmpty())) {
+            StreamPhaseLine(phase = streamPhase, hasContent = hasContent)
         }
 
         AnimatedVisibility(
@@ -458,41 +463,53 @@ private fun AssistantMessage(
 }
 
 /**
- * "请求服务端中" while waiting for the first token, "AI 正在输出" once text is
- * arriving. Dots only animate in the waiting phase, when there is nothing else
- * to read yet.
+ * "正在思考" while waiting for the first token (or while only thinking has
+ * arrived), "AI 正在输出" once the answer body starts streaming.
  */
 @Composable
-private fun StreamPhaseLine(phase: StreamPhase) {
+private fun StreamPhaseLine(phase: StreamPhase, hasContent: Boolean) {
     if (phase == StreamPhase.IDLE) return
+    val stillThinking = !hasContent
     Row(
         modifier = Modifier.padding(top = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        if (phase == StreamPhase.WAITING) {
+        if (stillThinking) {
             ThinkingDots()
             Spacer(Modifier.width(9.dp))
         }
         Text(
-            text = when (phase) {
-                StreamPhase.STREAMING -> "AI 正在输出"
-                StreamPhase.WAITING -> "请求服务端中"
-                StreamPhase.IDLE -> ""
-            },
+            text = if (hasContent) "AI 正在输出" else PROCESS_LABEL_THINKING_ACTIVE,
             style = MaterialTheme.typography.labelMedium.copy(fontSize = 10.5.sp),
             color = ReinColors.TextTertiary,
         )
     }
 }
 
-/** Chronological reasoning / tool timeline rebuilt from [ChatMessage.segments]. */
+/**
+ * Chronological reasoning / tool timeline rebuilt from [ChatMessage.segments].
+ *
+ * A tool card always ends the thinking block before it, and the next reasoning
+ * delta starts a new block. While the message streams, only the trailing
+ * thinking block (no answer text yet, no tool after it) stays expanded; every
+ * completed block collapses automatically unless the user toggled it.
+ */
 @Composable
 private fun SegmentTimeline(
     messageId: String,
     segments: List<MessageSegment>,
     isStreaming: Boolean,
+    hasContent: Boolean,
 ) {
     val firstReasoningIndex = segments.indexOfFirst { it.type == MessageSegment.TYPE_REASONING }
+    val lastIndex = segments.lastIndex
+    val activeReasoningIndex = if (isStreaming && !hasContent && lastIndex >= 0 &&
+        segments[lastIndex].type == MessageSegment.TYPE_REASONING
+    ) {
+        lastIndex
+    } else {
+        -1
+    }
     Column(
         modifier = Modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(6.dp),
@@ -503,7 +520,7 @@ private fun SegmentTimeline(
                     messageId = messageId,
                     index = index,
                     segment = segment,
-                    isStreaming = isStreaming,
+                    active = index == activeReasoningIndex,
                     first = index == firstReasoningIndex,
                 )
 
@@ -524,11 +541,11 @@ private fun ReasoningSegment(
     messageId: String,
     index: Int,
     segment: MessageSegment,
-    isStreaming: Boolean,
+    active: Boolean,
     first: Boolean,
 ) {
     var userToggled by remember(messageId, index) { mutableStateOf(false) }
-    var expanded by remember(messageId, index) { mutableStateOf(isStreaming) }
+    var expanded by remember(messageId, index) { mutableStateOf(active) }
     val scrollState = rememberScrollState()
     val chevronRotation by animateFloatAsState(
         targetValue = if (expanded) 90f else 0f,
@@ -536,12 +553,12 @@ private fun ReasoningSegment(
         label = "reasoningChevron",
     )
 
-    // Auto-expand while this message streams and auto-collapse once it is done.
-    LaunchedEffect(isStreaming) {
-        if (!userToggled) expanded = isStreaming
+    // Auto-expand the live thinking block and auto-collapse it once it ends.
+    LaunchedEffect(active) {
+        if (!userToggled) expanded = active
     }
     LaunchedEffect(segment.text, expanded) {
-        if (expanded && isStreaming) scrollState.scrollTo(scrollState.maxValue)
+        if (expanded && active) scrollState.scrollTo(scrollState.maxValue)
     }
 
     Column(modifier = Modifier.fillMaxWidth()) {
@@ -559,9 +576,9 @@ private fun ReasoningSegment(
             SegmentChevron(rotation = chevronRotation)
             Spacer(Modifier.width(6.dp))
             Text(
-                text = if (first) "思考过程" else "继续思考",
+                text = thinkingSegmentLabel(active = active, first = first),
                 style = MaterialTheme.typography.labelLarge.copy(fontSize = 12.sp),
-                color = ReinColors.TextSecondary,
+                color = if (active) ReinColors.TextPrimary else ReinColors.TextSecondary,
             )
             Spacer(Modifier.width(7.dp))
             Text(
@@ -571,9 +588,9 @@ private fun ReasoningSegment(
             )
             Spacer(Modifier.weight(1f))
             Text(
-                text = if (isStreaming) "思考中…" else "已思考",
+                text = if (active) "思考中…" else "已思考",
                 style = MaterialTheme.typography.labelMedium.copy(fontSize = 9.5.sp),
-                color = if (isStreaming) ReinColors.Mint.copy(alpha = 0.8f) else ReinColors.TextTertiary,
+                color = if (active) ReinColors.Mint.copy(alpha = 0.8f) else ReinColors.TextTertiary,
             )
         }
 
@@ -625,8 +642,9 @@ private fun ToolSegment(
 ) {
     val hasDetail = segment.detail.isNotBlank()
     var expanded by remember(messageId, index) { mutableStateOf(false) }
-    val running = segment.status == MessageSegment.TOOL_STATUS_RUNNING
-    val failed = segment.status == MessageSegment.TOOL_STATUS_FAILED
+    val status = normalizeToolStatus(segment.status)
+    val running = status == MessageSegment.TOOL_STATUS_RUNNING
+    val failed = status == MessageSegment.TOOL_STATUS_FAILED
     val stateColor = when {
         failed -> ReinColors.Danger
         running -> ReinColors.Mint
@@ -682,7 +700,7 @@ private fun ToolSegment(
             if (hasDetail) {
                 Spacer(Modifier.width(8.dp))
                 Text(
-                    text = "结果",
+                    text = if (failed) "错误" else "结果",
                     style = MaterialTheme.typography.labelMedium.copy(fontSize = 9.5.sp),
                     color = ReinColors.TextTertiary,
                 )
@@ -852,7 +870,7 @@ private fun ThinkingBlock(
             SegmentChevron(rotation = chevronRotation)
             Spacer(Modifier.width(6.dp))
             Text(
-                text = "思考过程",
+                text = if (stillThinking) PROCESS_LABEL_THINKING_ACTIVE else PROCESS_LABEL_THINKING_DONE,
                 style = MaterialTheme.typography.labelLarge.copy(fontSize = 12.sp),
                 color = ReinColors.TextSecondary,
             )

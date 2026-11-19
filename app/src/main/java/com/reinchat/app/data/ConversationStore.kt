@@ -64,26 +64,41 @@ class ConversationStore(context: Context) {
         }
     }
 
-    private fun normalize(conversation: Conversation): Conversation {
-        val cleaned = conversation.messages.mapNotNull { message ->
-            when {
-                message.status == MessageStatus.STREAMING -> {
-                    if (message.content.isBlank() && message.reasoning.isBlank()) null else message.copy(
-                        status = MessageStatus.CANCELLED,
-                        error = null,
-                    )
-                }
-                message.status.isCancelled &&
-                    message.content.isBlank() &&
+    private fun normalize(conversation: Conversation): Conversation =
+        normalizeStoredConversation(conversation)
+}
+
+/**
+ * Archive repair rules, kept pure so they can be unit-tested.
+ *
+ * A message that was still streaming when the process died is kept as CANCELLED
+ * when it produced *anything* — including tool segments without answer text, so
+ * a partially streamed tool timeline is not silently dropped on restart.
+ */
+internal fun normalizeStoredConversation(conversation: Conversation): Conversation {
+    val cleaned = conversation.messages.mapNotNull { message ->
+        when {
+            message.status == MessageStatus.STREAMING -> {
+                val empty = message.content.isBlank() &&
                     message.reasoning.isBlank() &&
-                    message.segments.isEmpty() -> null
-                else -> message
+                    message.segments.isEmpty()
+                if (empty) null else message.copy(
+                    status = MessageStatus.CANCELLED,
+                    error = null,
+                )
             }
+
+            message.status.isCancelled &&
+                message.content.isBlank() &&
+                message.reasoning.isBlank() &&
+                message.segments.isEmpty() -> null
+
+            else -> message
         }
-        val title = conversation.title.ifBlank {
-            val first = cleaned.firstOrNull { it.role == MessageRole.USER }
-            titleFromPrompt(first?.content.orEmpty(), first?.images?.size ?: 0)
-        }
-        return conversation.copy(title = title, messages = cleaned)
     }
+    val title = conversation.title.ifBlank {
+        val first = cleaned.firstOrNull { it.role == MessageRole.USER }
+        titleFromPrompt(first?.content.orEmpty(), first?.images?.size ?: 0)
+    }
+    return conversation.copy(title = title, messages = cleaned)
 }

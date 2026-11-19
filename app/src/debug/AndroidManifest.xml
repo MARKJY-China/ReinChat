@@ -5,5 +5,9 @@
             android:name=".DebugSeedActivity"
             android:exported="true"
             android:theme="@style/Theme.ReinChat" />
+        <activity
+            android:name=".DebugOcrProbeActivity"
+            android:exported="true"
+            android:theme="@style/Theme.ReinChat" />
     </application>
 </manifest>

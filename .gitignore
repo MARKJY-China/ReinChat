@@ -52,6 +52,8 @@ Thumbs.db
 app040.png
 web-live-logged-in.png
 tools/mock_requests.log
+tools/mock_cloud_ocr_requests.log
+tools/mock_cloud_ocr_requests-relay-body.json
 tools/cdp-*.mjs
 screenshots/17-web-live.png
 screenshots/19-web-e2e.png
