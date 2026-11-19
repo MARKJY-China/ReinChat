@@ -41,8 +41,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Cloud
+import androidx.compose.material.icons.rounded.DarkMode
 import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.Edit
+import androidx.compose.material.icons.rounded.LightMode
 import androidx.compose.material.icons.rounded.MoreHoriz
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Settings
@@ -58,7 +60,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -75,13 +78,17 @@ import com.reinchat.app.ui.components.SearchField
 import com.reinchat.app.ui.components.Wordmark
 import com.reinchat.app.ui.components.clickableNoRipple
 import com.reinchat.app.ui.components.formatSessionTime
-import com.reinchat.app.ui.components.liquidGlass
 import com.reinchat.app.ui.components.pressScale
 import com.reinchat.app.ui.theme.LiquidEase
 import com.reinchat.app.ui.theme.LiquidEaseOutSoft
+import com.reinchat.app.ui.theme.LocalReinThemeControl
 import com.reinchat.app.ui.theme.ReinColors
 import java.util.Locale
 
+/**
+ * Minimal conversation rail. Text-first rows on paper, one hairline edge, a single
+ * soft surface for the active conversation, and no glass cards.
+ */
 @Composable
 fun SessionDrawerOverlay(
     visible: Boolean,
@@ -99,6 +106,7 @@ fun SessionDrawerOverlay(
     var renameTarget by remember { mutableStateOf<Conversation?>(null) }
     var deleteTarget by remember { mutableStateOf<Conversation?>(null) }
     var renameText by remember { mutableStateOf("") }
+    val themeControl = LocalReinThemeControl.current
 
     LaunchedEffect(visible) {
         if (!visible) {
@@ -116,13 +124,13 @@ fun SessionDrawerOverlay(
     Box(modifier = Modifier.fillMaxSize()) {
         AnimatedVisibility(
             visible = visible,
-            enter = fadeIn(tween(150)),
-            exit = fadeOut(tween(150)),
+            enter = fadeIn(tween(140)),
+            exit = fadeOut(tween(140)),
         ) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(Color.Black.copy(alpha = 0.47f))
+                    .background(ReinColors.Scrim)
                     .clickable(
                         interactionSource = remember { MutableInteractionSource() },
                         indication = null,
@@ -132,17 +140,17 @@ fun SessionDrawerOverlay(
         }
 
         BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-            val panelWidth = minOf(maxWidth * 0.865f, 364.dp)
+            val panelWidth = minOf(maxWidth * 0.86f, 336.dp)
             AnimatedVisibility(
                 visible = visible,
                 modifier = Modifier.align(Alignment.CenterStart),
                 enter = slideInHorizontally(
                     initialOffsetX = { -it },
-                    animationSpec = tween(230, easing = LiquidEaseOutSoft),
+                    animationSpec = tween(220, easing = LiquidEaseOutSoft),
                 ) + fadeIn(tween(120)),
                 exit = slideOutHorizontally(
                     targetOffsetX = { -it },
-                    animationSpec = tween(200, easing = LiquidEaseOutSoft),
+                    animationSpec = tween(190, easing = LiquidEaseOutSoft),
                 ) + fadeOut(tween(120)),
             ) {
                 Column(
@@ -150,33 +158,43 @@ fun SessionDrawerOverlay(
                         .width(panelWidth)
                         .fillMaxHeight()
                         .imePadding()
-                        .liquidGlass(
-                            shape = RoundedCornerShape(topEnd = 32.dp, bottomEnd = 32.dp),
-                            elevation = 30.dp,
-                            topTint = Color(0xDE0C1714),
-                            bottomTint = Color(0xEC070C0A),
-                            borderAlpha = 1.05f,
-                            glowColor = Color.Black.copy(alpha = 0.5f),
-                        )
+                        .background(ReinColors.DeepElevated)
+                        .drawBehind {
+                            drawLine(
+                                color = ReinColors.Hairline,
+                                start = Offset(size.width - 0.5f, 0f),
+                                end = Offset(size.width - 0.5f, size.height),
+                                strokeWidth = 1.dp.toPx(),
+                            )
+                        }
                         .statusBarsPadding()
-                        .padding(horizontal = 18.dp),
+                        .padding(horizontal = 14.dp),
                 ) {
-                    Spacer(Modifier.height(14.dp))
+                    Spacer(Modifier.height(12.dp))
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Wordmark(compact = true, modifier = Modifier.weight(1f))
+                        themeControl?.let { control ->
+                            GlassIconButton(
+                                icon = if (control.darkTheme) Icons.Rounded.LightMode else Icons.Rounded.DarkMode,
+                                contentDescription = if (control.darkTheme) "切换到浅色主题" else "切换到暗色主题",
+                                onClick = control.onToggle,
+                                size = 34.dp,
+                                iconSize = 16.dp,
+                            )
+                        }
                         GlassIconButton(
                             icon = Icons.Rounded.Close,
                             contentDescription = "关闭会话面板",
                             onClick = onClose,
-                            size = 36.dp,
+                            size = 34.dp,
                             iconSize = 17.dp,
                         )
                     }
 
-                    Spacer(Modifier.height(18.dp))
+                    Spacer(Modifier.height(16.dp))
                     NewConversationButton(
                         onClick = {
                             onNew()
@@ -194,16 +212,15 @@ fun SessionDrawerOverlay(
                                 imageVector = Icons.Rounded.Search,
                                 contentDescription = null,
                                 tint = ReinColors.TextTertiary,
-                                modifier = Modifier.size(15.dp),
+                                modifier = Modifier.size(14.dp),
                             )
                         },
                         trailing = if (query.isNotEmpty()) {
                             {
                                 Box(
                                     modifier = Modifier
-                                        .size(22.dp)
+                                        .size(20.dp)
                                         .clip(CircleShape)
-                                        .background(Color.White.copy(alpha = 0.06f))
                                         .clickableNoRipple { query = "" },
                                     contentAlignment = Alignment.Center,
                                 ) {
@@ -231,24 +248,24 @@ fun SessionDrawerOverlay(
                         }
                     }
 
-                    Spacer(Modifier.height(20.dp))
+                    Spacer(Modifier.height(18.dp))
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Text(
-                            text = if (query.isBlank()) "最近会话" else "搜索结果",
-                            style = MaterialTheme.typography.labelMedium.copy(letterSpacing = 1.1.sp),
+                            text = if (query.isBlank()) "会话" else "搜索结果",
+                            style = MaterialTheme.typography.labelMedium.copy(letterSpacing = 1.2.sp),
                             color = ReinColors.TextTertiary,
                         )
                         Spacer(Modifier.weight(1f))
                         Text(
                             text = "${filtered.size}",
                             style = MaterialTheme.typography.labelMedium,
-                            color = ReinColors.TextTertiary.copy(alpha = 0.6f),
+                            color = ReinColors.TextTertiary.copy(alpha = 0.7f),
                         )
                     }
-                    Spacer(Modifier.height(9.dp))
+                    Spacer(Modifier.height(6.dp))
 
                     if (filtered.isEmpty()) {
                         Box(
@@ -260,7 +277,7 @@ fun SessionDrawerOverlay(
                             Text(
                                 text = if (query.isBlank()) "还没有会话\n开始一段新的对话吧" else "没有找到匹配的会话",
                                 style = MaterialTheme.typography.bodyMedium,
-                                color = ReinColors.TextTertiary.copy(alpha = 0.7f),
+                                color = ReinColors.TextTertiary,
                                 textAlign = androidx.compose.ui.text.style.TextAlign.Center,
                             )
                         }
@@ -269,7 +286,7 @@ fun SessionDrawerOverlay(
                             modifier = Modifier
                                 .weight(1f)
                                 .fillMaxWidth(),
-                            verticalArrangement = Arrangement.spacedBy(5.dp),
+                            verticalArrangement = Arrangement.spacedBy(2.dp),
                         ) {
                             items(filtered, key = { it.id }) { conversation ->
                                 ConversationRow(
@@ -300,25 +317,31 @@ fun SessionDrawerOverlay(
                         }
                     }
 
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(1.dp)
+                            .background(ReinColors.Hairline)
+                    )
                     Row(
                         modifier = Modifier
                             .navigationBarsPadding()
                             .fillMaxWidth()
-                            .clip(RoundedCornerShape(16.dp))
+                            .clip(RoundedCornerShape(7.dp))
                             .clickableNoRipple {
                                 onClose()
                                 onOpenSettings()
                             }
-                            .padding(horizontal = 9.dp, vertical = 14.dp),
+                            .padding(horizontal = 7.dp, vertical = 13.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Icon(
                             imageVector = Icons.Rounded.Settings,
                             contentDescription = null,
                             tint = ReinColors.TextSecondary,
-                            modifier = Modifier.size(17.dp),
+                            modifier = Modifier.size(16.dp),
                         )
-                        Spacer(Modifier.width(10.dp))
+                        Spacer(Modifier.width(9.dp))
                         Text(
                             text = "服务商与设置",
                             style = MaterialTheme.typography.labelLarge,
@@ -328,7 +351,7 @@ fun SessionDrawerOverlay(
                         Text(
                             text = "v0.1",
                             style = MaterialTheme.typography.labelMedium,
-                            color = ReinColors.TextTertiary.copy(alpha = 0.55f),
+                            color = ReinColors.TextTertiary.copy(alpha = 0.7f),
                         )
                     }
                 }
@@ -343,7 +366,7 @@ fun SessionDrawerOverlay(
                 style = MaterialTheme.typography.headlineSmall,
                 color = ReinColors.TextPrimary,
             )
-            Spacer(Modifier.height(17.dp))
+            Spacer(Modifier.height(15.dp))
             GlassInputField(
                 value = renameText,
                 onValueChange = { if (it.length <= 80) renameText = it },
@@ -357,7 +380,7 @@ fun SessionDrawerOverlay(
                     }
                 }),
             )
-            Spacer(Modifier.height(20.dp))
+            Spacer(Modifier.height(18.dp))
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.End,
@@ -368,7 +391,7 @@ fun SessionDrawerOverlay(
                     tint = ReinColors.TextSecondary,
                     onClick = { renameTarget = null },
                 )
-                Spacer(Modifier.width(8.dp))
+                Spacer(Modifier.width(6.dp))
                 LiquidPrimaryButton(
                     text = "保存",
                     enabled = renameText.isNotBlank(),
@@ -376,7 +399,7 @@ fun SessionDrawerOverlay(
                         onRename(target.id, renameText)
                         renameTarget = null
                     },
-                    modifier = Modifier.widthIn(min = 96.dp),
+                    modifier = Modifier.widthIn(min = 88.dp),
                 )
             }
         }
@@ -389,13 +412,13 @@ fun SessionDrawerOverlay(
                 style = MaterialTheme.typography.headlineSmall,
                 color = ReinColors.TextPrimary,
             )
-            Spacer(Modifier.height(10.dp))
+            Spacer(Modifier.height(9.dp))
             Text(
                 text = "「${target.title}」及其中的消息、图片将从本机移除，此操作无法撤销。",
                 style = MaterialTheme.typography.bodyMedium,
                 color = ReinColors.TextSecondary,
             )
-            Spacer(Modifier.height(22.dp))
+            Spacer(Modifier.height(20.dp))
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.End,
@@ -406,24 +429,19 @@ fun SessionDrawerOverlay(
                     tint = ReinColors.TextSecondary,
                     onClick = { deleteTarget = null },
                 )
-                Spacer(Modifier.width(8.dp))
-                Row(
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    text = "删除",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = ReinColors.Danger,
                     modifier = Modifier
-                        .clip(RoundedCornerShape(16.dp))
-                        .background(ReinColors.Danger.copy(alpha = 0.14f))
-                        .border(1.dp, ReinColors.Danger.copy(alpha = 0.26f), RoundedCornerShape(16.dp))
+                        .clip(RoundedCornerShape(8.dp))
                         .clickableNoRipple {
                             onDelete(target.id)
                             deleteTarget = null
                         }
-                        .padding(horizontal = 18.dp, vertical = 12.dp),
-                ) {
-                    Text(
-                        text = "删除",
-                        style = MaterialTheme.typography.labelLarge,
-                        color = ReinColors.Danger,
-                    )
-                }
+                        .padding(horizontal = 10.dp, vertical = 8.dp),
+                )
             }
         }
     }
@@ -432,40 +450,25 @@ fun SessionDrawerOverlay(
 @Composable
 private fun NewConversationButton(onClick: () -> Unit) {
     val interaction = remember { MutableInteractionSource() }
-    val shape = RoundedCornerShape(17.dp)
+    val shape = RoundedCornerShape(9.dp)
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .pressScale(interaction, 0.98f)
+            .pressScale(interaction, 0.99f)
             .clip(shape)
-            .background(
-                Brush.linearGradient(
-                    listOf(
-                        ReinColors.Mint.copy(alpha = 0.17f),
-                        ReinColors.Cyan.copy(alpha = 0.065f),
-                    )
-                )
-            )
-            .border(1.dp, ReinColors.Mint.copy(alpha = 0.17f), shape)
+            .background(ReinColors.Surface)
+            .border(1.dp, ReinColors.Hairline, shape)
             .clickable(interactionSource = interaction, indication = null, onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 13.dp),
+            .padding(horizontal = 12.dp, vertical = 11.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box(
-            modifier = Modifier
-                .size(24.dp)
-                .clip(CircleShape)
-                .background(ReinColors.Mint.copy(alpha = 0.16f)),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(
-                imageVector = Icons.Rounded.Add,
-                contentDescription = null,
-                tint = ReinColors.Mint,
-                modifier = Modifier.size(16.dp),
-            )
-        }
-        Spacer(Modifier.width(10.dp))
+        Icon(
+            imageVector = Icons.Rounded.Add,
+            contentDescription = null,
+            tint = ReinColors.TextPrimary,
+            modifier = Modifier.size(16.dp),
+        )
+        Spacer(Modifier.width(9.dp))
         Text(
             text = "新建对话",
             style = MaterialTheme.typography.titleMedium,
@@ -487,20 +490,26 @@ private fun ConversationRow(
     modifier: Modifier = Modifier,
 ) {
     val background by animateColorAsState(
-        targetValue = if (active) Color.White.copy(alpha = 0.075f) else Color.Transparent,
-        animationSpec = tween(240, easing = LiquidEase),
+        targetValue = if (active) ReinColors.Surface else Color.Transparent,
+        animationSpec = tween(160, easing = LiquidEase),
         label = "conversationBg",
     )
-    val shape = RoundedCornerShape(18.dp)
+    val shape = RoundedCornerShape(8.dp)
     Column(
         modifier = modifier
             .fillMaxWidth()
             .clip(shape)
             .background(background)
-            .then(
-                if (active) Modifier.border(1.dp, Color.White.copy(alpha = 0.075f), shape)
-                else Modifier
-            )
+            .then(if (active) Modifier.border(1.dp, ReinColors.Hairline, shape) else Modifier)
+            .drawBehind {
+                if (active) {
+                    drawRect(
+                        color = ReinColors.Mint,
+                        topLeft = Offset(0f, 10.dp.toPx()),
+                        size = androidx.compose.ui.geometry.Size(2.dp.toPx(), size.height - 20.dp.toPx()),
+                    )
+                }
+            }
     ) {
         Row(
             modifier = Modifier
@@ -510,7 +519,7 @@ private fun ConversationRow(
                     indication = null,
                     onClick = onSelect,
                 )
-                .padding(start = if (active) 11.dp else 12.dp, end = 6.dp, top = 11.dp, bottom = 9.dp),
+                .padding(start = 11.dp, end = 2.dp, top = 9.dp, bottom = 9.dp),
             verticalAlignment = Alignment.Top,
         ) {
             Column(
@@ -519,28 +528,20 @@ private fun ConversationRow(
                     .padding(top = 1.dp),
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    if (active) {
-                        Box(
-                            modifier = Modifier
-                                .padding(end = 7.dp)
-                                .size(5.dp)
-                                .clip(CircleShape)
-                                .background(ReinColors.Mint)
-                        )
-                    }
                     if (conversation.cloud) {
                         Icon(
                             imageVector = Icons.Rounded.Cloud,
                             contentDescription = "云端会话",
-                            tint = ReinColors.Cyan.copy(alpha = 0.65f),
+                            tint = ReinColors.Mint.copy(alpha = 0.7f),
                             modifier = Modifier
-                                .padding(end = 5.dp)
-                                .size(12.dp),
+                                .padding(end = 4.dp)
+                                .size(11.dp),
                         )
                     }
                     Text(
                         text = conversation.title,
-                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Medium),
+                        style = MaterialTheme.typography.titleMedium.copy(fontSize = 12.5.sp),
+                        fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
                         color = if (active) ReinColors.TextPrimary else ReinColors.TextPrimary.copy(alpha = 0.82f),
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
@@ -549,22 +550,14 @@ private fun ConversationRow(
                     Spacer(Modifier.width(8.dp))
                     Text(
                         text = formatSessionTime(conversation.updatedAt),
-                        style = MaterialTheme.typography.labelMedium.copy(fontSize = 9.5.sp),
-                        color = ReinColors.TextTertiary.copy(alpha = 0.6f),
+                        style = MaterialTheme.typography.labelMedium.copy(fontSize = 9.sp),
+                        color = ReinColors.TextTertiary.copy(alpha = 0.85f),
                     )
                 }
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    text = conversation.preview,
-                    style = MaterialTheme.typography.bodyMedium.copy(fontSize = 12.sp, lineHeight = 17.sp),
-                    color = ReinColors.TextTertiary.copy(alpha = 0.82f),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
             }
             Box(
                 modifier = Modifier
-                    .size(30.dp)
+                    .size(28.dp)
                     .clip(CircleShape)
                     .clickableNoRipple(onToggleActions),
                 contentAlignment = Alignment.Center,
@@ -572,39 +565,37 @@ private fun ConversationRow(
                 Icon(
                     imageVector = Icons.Rounded.MoreHoriz,
                     contentDescription = "会话操作",
-                    tint = ReinColors.TextTertiary.copy(alpha = if (actionsOpen) 0.9f else 0.52f),
-                    modifier = Modifier.size(16.dp),
+                    tint = ReinColors.TextTertiary.copy(alpha = if (actionsOpen) 0.95f else 0.6f),
+                    modifier = Modifier.size(15.dp),
                 )
             }
         }
 
         AnimatedVisibility(
             visible = actionsOpen,
-            enter = fadeIn(tween(150)) + expandVertically(
-                tween(220, easing = LiquidEaseOutSoft),
+            enter = fadeIn(tween(120)) + expandVertically(
+                tween(170, easing = LiquidEaseOutSoft),
                 expandFrom = Alignment.Top,
             ),
-            exit = fadeOut(tween(100)) + shrinkVertically(tween(160), shrinkTowards = Alignment.Top),
+            exit = fadeOut(tween(90)) + shrinkVertically(tween(140), shrinkTowards = Alignment.Top),
         ) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(start = 10.dp, end = 10.dp, bottom = 9.dp),
-                horizontalArrangement = Arrangement.spacedBy(7.dp),
+                    .padding(start = 11.dp, end = 8.dp, bottom = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(14.dp),
             ) {
                 InlineAction(
                     label = "重命名",
                     icon = Icons.Rounded.Edit,
                     tint = ReinColors.TextSecondary,
                     onClick = onRename,
-                    modifier = Modifier.weight(1f),
                 )
                 InlineAction(
                     label = "删除",
                     icon = Icons.Rounded.DeleteOutline,
                     tint = ReinColors.Danger.copy(alpha = 0.9f),
                     onClick = onDelete,
-                    modifier = Modifier.weight(1f),
                 )
             }
         }
@@ -617,27 +608,24 @@ private fun InlineAction(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     tint: Color,
     onClick: () -> Unit,
-    modifier: Modifier = Modifier,
 ) {
     Row(
-        modifier = modifier
-            .clip(RoundedCornerShape(11.dp))
-            .background(Color.White.copy(alpha = 0.04f))
+        modifier = Modifier
+            .clip(RoundedCornerShape(5.dp))
             .clickableNoRipple(onClick)
-            .padding(horizontal = 10.dp, vertical = 7.dp),
-        horizontalArrangement = Arrangement.Center,
+            .padding(vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Icon(
             imageVector = icon,
             contentDescription = null,
             tint = tint,
-            modifier = Modifier.size(13.dp),
+            modifier = Modifier.size(12.dp),
         )
-        Spacer(Modifier.width(5.dp))
+        Spacer(Modifier.width(4.dp))
         Text(
             text = label,
-            style = MaterialTheme.typography.labelMedium,
+            style = MaterialTheme.typography.labelMedium.copy(fontSize = 10.sp),
             color = tint,
         )
     }

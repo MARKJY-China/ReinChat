@@ -18,7 +18,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
@@ -39,12 +38,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.painter.Painter
@@ -61,67 +58,33 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.reinchat.app.ui.theme.ReinColors
 
+/**
+ * Flat replacement for the old liquid-glass surface.
+ *
+ * The parameters are kept for call-site compatibility. [topTint] is now a plain
+ * opaque fill (the callers pass paper, white or the soft accent), the border is a
+ * single hairline, and the gradient/sheen/glow layers are gone.
+ */
 fun Modifier.liquidGlass(
-    shape: Shape = RoundedCornerShape(28.dp),
+    shape: Shape = RoundedCornerShape(12.dp),
     elevation: Dp = 0.dp,
-    topTint: Color = ReinColors.GlassTop,
-    bottomTint: Color = ReinColors.GlassBottom,
+    topTint: Color = ReinColors.Surface,
+    bottomTint: Color = Color.Unspecified,
     borderAlpha: Float = 1f,
     glowColor: Color? = null,
 ): Modifier {
     var modifier: Modifier = this
     if (elevation > 0.dp) {
-        modifier = if (glowColor != null) {
-            modifier.shadow(
-                elevation = elevation,
-                shape = shape,
-                clip = false,
-                ambientColor = glowColor,
-                spotColor = glowColor,
-            )
-        } else {
-            modifier.shadow(elevation, shape, clip = false)
-        }
+        modifier = modifier.shadow(
+            elevation = elevation.coerceAtMost(14.dp),
+            shape = shape,
+            clip = false,
+        )
     }
     return modifier
         .clip(shape)
-        .background(Brush.verticalGradient(listOf(topTint, bottomTint)))
-        .border(
-            width = 1.dp,
-            brush = Brush.linearGradient(
-                listOf(
-                    Color.White.copy(alpha = 0.30f * borderAlpha),
-                    ReinColors.Mint.copy(alpha = 0.14f * borderAlpha),
-                    ReinColors.GlassBorderBottom.copy(alpha = ReinColors.GlassBorderBottom.alpha * borderAlpha),
-                    ReinColors.Violet.copy(alpha = 0.10f * borderAlpha),
-                )
-            ),
-            shape = shape,
-        )
-        .drawWithContent {
-            drawRect(
-                brush = Brush.verticalGradient(
-                    0f to Color.White.copy(alpha = 0.055f * borderAlpha),
-                    0.22f to Color.Transparent,
-                    1f to Color.Transparent,
-                    startY = 0f,
-                    endY = size.height * 0.5f,
-                )
-            )
-            drawContent()
-            drawLine(
-                brush = Brush.horizontalGradient(
-                    listOf(
-                        Color.Transparent,
-                        Color.White.copy(alpha = 0.34f * borderAlpha),
-                        Color.Transparent,
-                    )
-                ),
-                start = Offset(size.width * 0.14f, 1f),
-                end = Offset(size.width * 0.86f, 1f),
-                strokeWidth = 1.dp.toPx(),
-            )
-        }
+        .background(topTint, shape)
+        .border(1.dp, ReinColors.Hairline, shape)
 }
 
 fun Modifier.clickableNoRipple(onClick: () -> Unit): Modifier = this.clickable(
@@ -133,12 +96,12 @@ fun Modifier.clickableNoRipple(onClick: () -> Unit): Modifier = this.clickable(
 @Composable
 fun Modifier.pressScale(
     interactionSource: MutableInteractionSource,
-    pressedScale: Float = 0.95f,
+    pressedScale: Float = 0.98f,
 ): Modifier {
     val pressed by interactionSource.collectIsPressedAsState()
     val scale by animateFloatAsState(
         targetValue = if (pressed) pressedScale else 1f,
-        animationSpec = spring(dampingRatio = 0.68f, stiffness = 720f),
+        animationSpec = spring(dampingRatio = 0.8f, stiffness = 900f),
         label = "pressScale",
     )
     return graphicsLayer {
@@ -151,10 +114,10 @@ fun Modifier.pressScale(
 @Composable
 fun GlassSurface(
     modifier: Modifier = Modifier,
-    shape: Shape = RoundedCornerShape(28.dp),
+    shape: Shape = RoundedCornerShape(12.dp),
     elevation: Dp = 0.dp,
-    topTint: Color = ReinColors.GlassTop,
-    bottomTint: Color = ReinColors.GlassBottom,
+    topTint: Color = ReinColors.Surface,
+    bottomTint: Color = Color.Unspecified,
     contentPadding: PaddingValues = PaddingValues(0.dp),
     content: @Composable ColumnScope.() -> Unit,
 ) {
@@ -172,29 +135,20 @@ fun GlassIconButton(
     contentDescription: String,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
-    size: Dp = 42.dp,
-    iconSize: Dp = 19.dp,
-    tint: Color = ReinColors.TextPrimary,
+    size: Dp = 38.dp,
+    iconSize: Dp = 18.dp,
+    tint: Color = ReinColors.TextSecondary,
     enabled: Boolean = true,
     background: Boolean = true,
 ) {
     val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
     val haptics = LocalHapticFeedback.current
     Box(
         modifier = modifier
             .size(size)
-            .pressScale(interaction)
-            .then(
-                if (background) {
-                    Modifier
-                        .liquidGlass(
-                            CircleShape,
-                            topTint = Color.White.copy(alpha = 0.12f),
-                            bottomTint = Color.White.copy(alpha = 0.045f),
-                        )
-                } else Modifier
-            )
             .clip(CircleShape)
+            .background(if (pressed) ReinColors.TextPrimary.copy(alpha = 0.06f) else Color.Transparent)
             .clickable(
                 enabled = enabled,
                 interactionSource = interaction,
@@ -221,23 +175,17 @@ fun LiquidPrimaryButton(
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
     icon: ImageVector? = null,
+    trailingIcon: ImageVector? = null,
 ) {
     val interaction = remember { MutableInteractionSource() }
     val haptics = LocalHapticFeedback.current
+    val fg = if (enabled) ReinColors.OnInk else ReinColors.TextTertiary
     Row(
         modifier = modifier
-            .defaultMinSize(minHeight = 52.dp)
+            .defaultMinSize(minHeight = 46.dp)
             .pressScale(interaction)
-            .clip(RoundedCornerShape(18.dp))
-            .background(
-                if (enabled) {
-                    Brush.linearGradient(listOf(ReinColors.Mint, Color(0xFF9DE7F9)))
-                } else {
-                    Brush.linearGradient(
-                        listOf(Color.White.copy(alpha = 0.09f), Color.White.copy(alpha = 0.05f))
-                    )
-                }
-            )
+            .clip(RoundedCornerShape(11.dp))
+            .background(if (enabled) ReinColors.TextPrimary else ReinColors.TextPrimary.copy(alpha = 0.10f))
             .clickable(
                 enabled = enabled,
                 interactionSource = interaction,
@@ -246,7 +194,7 @@ fun LiquidPrimaryButton(
                 haptics.performHapticFeedback(HapticFeedbackType.LongPress)
                 onClick()
             }
-            .padding(horizontal = 22.dp, vertical = 14.dp),
+            .padding(horizontal = 18.dp, vertical = 12.dp),
         horizontalArrangement = Arrangement.Center,
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -254,17 +202,26 @@ fun LiquidPrimaryButton(
             Icon(
                 imageVector = icon,
                 contentDescription = null,
-                tint = if (enabled) Color(0xFF052019) else ReinColors.TextTertiary,
-                modifier = Modifier.size(18.dp),
+                tint = fg,
+                modifier = Modifier.size(16.dp),
             )
             Spacer(Modifier.size(8.dp))
         }
         Text(
             text = text,
-            style = MaterialTheme.typography.titleMedium,
+            style = MaterialTheme.typography.labelLarge,
             fontWeight = FontWeight.SemiBold,
-            color = if (enabled) Color(0xFF052019) else ReinColors.TextTertiary,
+            color = fg,
         )
+        if (trailingIcon != null) {
+            Spacer(Modifier.size(8.dp))
+            Icon(
+                imageVector = trailingIcon,
+                contentDescription = null,
+                tint = fg,
+                modifier = Modifier.size(16.dp),
+            )
+        }
     }
 }
 
@@ -275,12 +232,10 @@ fun GlassPill(
 ) {
     Row(
         modifier = modifier
-            .liquidGlass(
-                shape = RoundedCornerShape(50),
-                topTint = Color.White.copy(alpha = 0.075f),
-                bottomTint = Color.White.copy(alpha = 0.025f),
-            )
-            .padding(horizontal = 12.dp, vertical = 7.dp),
+            .clip(RoundedCornerShape(50))
+            .background(ReinColors.Surface)
+            .border(1.dp, ReinColors.Hairline, RoundedCornerShape(50))
+            .padding(horizontal = 11.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
         content = content,
     )
@@ -296,10 +251,9 @@ fun GlassTextButton(
     val interaction = remember { MutableInteractionSource() }
     Box(
         modifier = modifier
-            .pressScale(interaction, 0.96f)
-            .clip(RoundedCornerShape(10.dp))
+            .clip(RoundedCornerShape(7.dp))
             .clickable(interactionSource = interaction, indication = null, onClick = onClick)
-            .padding(horizontal = 10.dp, vertical = 6.dp),
+            .padding(horizontal = 7.dp, vertical = 6.dp),
     ) {
         Text(text = text, style = MaterialTheme.typography.labelLarge, color = tint)
     }
@@ -307,25 +261,25 @@ fun GlassTextButton(
 
 @Composable
 fun GlassSnackbar(data: SnackbarData) {
-    GlassSurface(
-        modifier = Modifier.padding(horizontal = 20.dp),
-        shape = RoundedCornerShape(20.dp),
-        elevation = 18.dp,
-        topTint = Color(0xF01A2320),
-        bottomTint = Color(0xF00D1412),
-        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+    Row(
+        modifier = Modifier
+            .padding(horizontal = 18.dp)
+            .widthIn(max = 520.dp)
+            .clip(RoundedCornerShape(11.dp))
+            .background(ReinColors.Surface)
+            .border(1.dp, ReinColors.Hairline, RoundedCornerShape(11.dp))
+            .padding(horizontal = 14.dp, vertical = 11.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                text = data.visuals.message,
-                modifier = Modifier.weight(1f),
-                style = MaterialTheme.typography.bodyMedium,
-                color = ReinColors.TextPrimary,
-            )
-            data.visuals.actionLabel?.let { label ->
-                Spacer(Modifier.size(12.dp))
-                GlassTextButton(text = label, onClick = { data.performAction() })
-            }
+        Text(
+            text = data.visuals.message,
+            modifier = Modifier.weight(1f),
+            style = MaterialTheme.typography.bodyMedium,
+            color = ReinColors.TextPrimary,
+        )
+        data.visuals.actionLabel?.let { label ->
+            Spacer(Modifier.size(10.dp))
+            GlassTextButton(text = label, onClick = { data.performAction() })
         }
     }
 }
@@ -368,7 +322,7 @@ fun GlassTextField(
         keyboardOptions = keyboardOptions,
         keyboardActions = keyboardActions,
         visualTransformation = visualTransformation,
-        cursorBrush = Brush.verticalGradient(listOf(ReinColors.Mint, ReinColors.Mint)),
+        cursorBrush = SolidColor(ReinColors.Mint),
         decorationBox = { inner ->
             Row(verticalAlignment = Alignment.CenterVertically) {
                 leading?.invoke()
@@ -377,7 +331,7 @@ fun GlassTextField(
                         Text(
                             text = placeholder,
                             style = textStyle,
-                            color = ReinColors.TextTertiary,
+                            color = ReinColors.Placeholder,
                             maxLines = if (singleLine) 1 else maxLines,
                         )
                     }
@@ -407,7 +361,7 @@ fun GlassDialog(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.46f))
+                .background(ReinColors.Scrim)
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null,
@@ -417,7 +371,7 @@ fun GlassDialog(
         ) {
             Column(
                 modifier = modifier
-                    .padding(horizontal = 24.dp)
+                    .padding(horizontal = 22.dp)
                     .widthIn(max = 440.dp)
                     .fillMaxWidth()
                     .clickable(
@@ -425,13 +379,10 @@ fun GlassDialog(
                         indication = null,
                         onClick = {},
                     )
-                    .liquidGlass(
-                        shape = RoundedCornerShape(30.dp),
-                        elevation = 32.dp,
-                        topTint = Color(0xF01C2522),
-                        bottomTint = Color(0xF00C1311),
-                    )
-                    .padding(24.dp),
+                    .clip(RoundedCornerShape(17.dp))
+                    .background(ReinColors.Surface)
+                    .border(1.dp, ReinColors.Hairline, RoundedCornerShape(17.dp))
+                    .padding(22.dp),
                 content = content,
             )
         }
@@ -443,41 +394,25 @@ fun Wordmark(modifier: Modifier = Modifier, compact: Boolean = false) {
     Row(modifier = modifier, verticalAlignment = Alignment.CenterVertically) {
         Box(
             modifier = Modifier
-                .size(if (compact) 26.dp else 34.dp)
-                .clip(RoundedCornerShape(if (compact) 9.dp else 12.dp))
-                .background(
-                    Brush.linearGradient(
-                        listOf(
-                            ReinColors.Mint,
-                            ReinColors.Cyan,
-                            ReinColors.Violet,
-                        )
-                    )
-                )
-                .drawWithContent {
-                    drawContent()
-                    drawCircle(
-                        color = Color.White.copy(alpha = 0.42f),
-                        radius = size.minDimension * 0.26f,
-                        center = Offset(size.width * 0.28f, size.height * 0.24f),
-                    )
-                },
+                .size(if (compact) 22.dp else 26.dp)
+                .clip(RoundedCornerShape(if (compact) 7.dp else 8.dp))
+                .background(ReinColors.TextPrimary),
             contentAlignment = Alignment.Center,
         ) {
             Text(
                 text = "R",
-                color = Color(0xFF062019),
-                fontSize = if (compact) 15.sp else 19.sp,
+                color = ReinColors.OnInk,
+                fontSize = if (compact) 12.sp else 14.sp,
                 fontWeight = FontWeight.Bold,
             )
         }
-        Spacer(Modifier.size(if (compact) 8.dp else 10.dp))
+        Spacer(Modifier.size(if (compact) 8.dp else 9.dp))
         Text(
             text = "ReinChat",
-            style = MaterialTheme.typography.titleLarge,
-            fontWeight = FontWeight.SemiBold,
+            style = MaterialTheme.typography.titleLarge.copy(fontSize = if (compact) 14.sp else 16.sp),
+            fontWeight = FontWeight.Bold,
             color = ReinColors.TextPrimary,
-            letterSpacing = (-0.2).sp,
+            letterSpacing = (-0.3).sp,
         )
     }
 }

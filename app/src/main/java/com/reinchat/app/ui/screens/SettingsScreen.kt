@@ -8,7 +8,6 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -51,9 +50,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -103,7 +100,6 @@ fun SettingsScreen(
     var logoutConfirm by remember { mutableStateOf(false) }
     var editingProvider by remember { mutableStateOf<ProviderConfig?>(null) }
     var deleteTarget by remember { mutableStateOf<ProviderConfig?>(null) }
-    val overlayOpen = editorOpen || authOpen
 
     LaunchedEffect(account) {
         if (account != null) authOpen = false
@@ -138,49 +134,11 @@ fun SettingsScreen(
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(Color(0xFC060B09)),
+            .background(MaterialTheme.colorScheme.background),
     ) {
-        Canvas(
-            modifier = Modifier
-                .fillMaxSize()
-                .graphicsLayer { alpha = if (overlayOpen) 0f else 1f }
-        ) {
-            drawRect(
-                brush = Brush.radialGradient(
-                    colors = listOf(
-                        ReinColors.Mint.copy(alpha = 0.17f),
-                        Color.Transparent,
-                    ),
-                    center = androidx.compose.ui.geometry.Offset(size.width * 0.82f, -size.height * 0.04f),
-                    radius = size.width * 0.9f,
-                )
-            )
-            drawRect(
-                brush = Brush.radialGradient(
-                    colors = listOf(
-                        ReinColors.Cyan.copy(alpha = 0.08f),
-                        Color.Transparent,
-                    ),
-                    center = androidx.compose.ui.geometry.Offset(size.width * 0.1f, size.height * 0.28f),
-                    radius = size.width * 0.8f,
-                )
-            )
-            drawRect(
-                brush = Brush.radialGradient(
-                    colors = listOf(
-                        ReinColors.Violet.copy(alpha = 0.10f),
-                        Color.Transparent,
-                    ),
-                    center = androidx.compose.ui.geometry.Offset(size.width * 0.08f, size.height * 0.92f),
-                    radius = size.width * 0.85f,
-                )
-            )
-        }
-
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .graphicsLayer { alpha = if (overlayOpen) 0f else 1f }
                 .statusBarsPadding(),
         ) {
             Row(
@@ -254,7 +212,7 @@ fun SettingsScreen(
                         Box(
                             modifier = Modifier
                                 .clip(CircleShape)
-                                .background(Color.White.copy(alpha = 0.06f))
+                                .background(ReinColors.DeepElevated)
                                 .padding(horizontal = 7.dp, vertical = 2.dp)
                         ) {
                             Text(
@@ -474,8 +432,8 @@ private fun AccountSection(
                 modifier = Modifier
                     .clip(RoundedCornerShape(50))
                     .background(
-                        if (account != null) ReinColors.Mint.copy(alpha = 0.10f)
-                        else Color.White.copy(alpha = 0.05f)
+                        if (account != null) ReinColors.AccentSoft
+                        else ReinColors.DeepElevated
                     )
                     .padding(horizontal = 8.dp, vertical = 3.dp)
             ) {
@@ -491,8 +449,8 @@ private fun AccountSection(
         GlassSurface(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(23.dp),
-            topTint = Color.White.copy(alpha = 0.06f),
-            bottomTint = Color.White.copy(alpha = 0.02f),
+            topTint = ReinColors.Surface,
+            bottomTint = ReinColors.Surface,
             contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
         ) {
             if (account == null) {
@@ -539,15 +497,8 @@ private fun AccountSection(
                         modifier = Modifier
                             .size(38.dp)
                             .clip(CircleShape)
-                            .background(
-                                Brush.linearGradient(
-                                    listOf(
-                                        ReinColors.Mint.copy(alpha = 0.24f),
-                                        ReinColors.Cyan.copy(alpha = 0.10f),
-                                    )
-                                )
-                            )
-                            .border(1.dp, Color.White.copy(alpha = 0.15f), CircleShape),
+                            .background(ReinColors.AccentSoft)
+                            .border(1.dp, ReinColors.Hairline, CircleShape),
                         contentAlignment = Alignment.Center,
                     ) {
                         Text(
@@ -630,13 +581,8 @@ private fun ProviderCard(
             .pressScale(interaction, 0.99f)
             .liquidGlass(
                 shape = shape,
-                topTint = if (active) ReinColors.Mint.copy(alpha = 0.075f)
-                else Color.White.copy(alpha = 0.06f),
-                bottomTint = if (active) ReinColors.Cyan.copy(alpha = 0.025f)
-                else Color.White.copy(alpha = 0.02f),
-                borderAlpha = if (active) 1.35f else 0.9f,
-                elevation = if (active) 3.dp else 0.dp,
-                glowColor = if (active) ReinColors.Mint.copy(alpha = 0.13f) else null,
+                topTint = if (active) ReinColors.AccentSoft else ReinColors.Surface,
+                bottomTint = ReinColors.Surface,
             )
             .clip(shape)
             .clickable(interactionSource = interaction, indication = null, onClick = onEdit)
@@ -648,19 +594,11 @@ private fun ProviderCard(
                     .size(34.dp)
                     .clip(RoundedCornerShape(11.dp))
                     .background(
-                        if (active) {
-                            Brush.linearGradient(
-                                listOf(ReinColors.Mint.copy(alpha = 0.20f), ReinColors.Cyan.copy(alpha = 0.10f))
-                            )
-                        } else {
-                            Brush.verticalGradient(
-                                listOf(Color.White.copy(alpha = 0.07f), Color.White.copy(alpha = 0.03f))
-                            )
-                        }
+                        if (active) ReinColors.AccentSoft else ReinColors.DeepElevated
                     )
                     .border(
                         1.dp,
-                        if (active) ReinColors.Mint.copy(alpha = 0.18f) else Color.White.copy(alpha = 0.06f),
+                        if (active) ReinColors.Mint.copy(alpha = 0.3f) else ReinColors.Hairline,
                         RoundedCornerShape(11.dp),
                     ),
                 contentAlignment = Alignment.Center,
@@ -685,21 +623,13 @@ private fun ProviderCard(
                     Box(
                         modifier = Modifier
                             .clip(RoundedCornerShape(50))
-                            .background(
-                                if (provider.protocol == com.reinchat.app.data.ApiProtocol.RESPONSES) {
-                                    ReinColors.Violet.copy(alpha = 0.11f)
-                                } else {
-                                    ReinColors.Cyan.copy(alpha = 0.09f)
-                                }
-                            )
+                            .background(ReinColors.DeepElevated)
                             .padding(horizontal = 7.dp, vertical = 2.dp)
                     ) {
                         Text(
                             text = provider.endpointLabel,
                             style = MaterialTheme.typography.labelMedium.copy(fontSize = 9.sp),
-                            color = if (provider.protocol == com.reinchat.app.data.ApiProtocol.RESPONSES)
-                                ReinColors.Violet.copy(alpha = 0.9f)
-                            else ReinColors.Cyan.copy(alpha = 0.9f),
+                            color = ReinColors.TextSecondary,
                         )
                     }
                     if (active) {
@@ -729,7 +659,7 @@ private fun ProviderCard(
                         )
                         .border(
                             1.dp,
-                            if (active) ReinColors.Mint.copy(alpha = 0.5f) else Color.White.copy(alpha = 0.16f),
+                            if (active) ReinColors.Mint.copy(alpha = 0.5f) else ReinColors.Hairline,
                             CircleShape,
                         ),
                     contentAlignment = Alignment.Center,
@@ -766,11 +696,7 @@ private fun ProviderCard(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(1.dp)
-                .background(
-                    Brush.horizontalGradient(
-                        listOf(Color.White.copy(alpha = 0.07f), Color.Transparent)
-                    )
-                )
+                .background(ReinColors.Hairline)
         )
         Spacer(Modifier.height(11.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -836,8 +762,8 @@ private fun AddProviderButton(onClick: () -> Unit) {
         modifier = Modifier
             .fillMaxWidth()
             .pressScale(interaction, 0.99f)
-            .border(1.dp, Color.White.copy(alpha = 0.075f), shape)
-            .background(Color.White.copy(alpha = 0.022f), shape)
+            .border(1.dp, ReinColors.Hairline, shape)
+            .background(ReinColors.Surface, shape)
             .clickable(interactionSource = interaction, indication = null, onClick = onClick)
             .padding(horizontal = 15.dp, vertical = 13.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -870,8 +796,8 @@ private fun EmptyProvidersCard(onAdd: () -> Unit) {
             .fillMaxWidth()
             .liquidGlass(
                 shape = RoundedCornerShape(24.dp),
-                topTint = Color.White.copy(alpha = 0.062f),
-                bottomTint = Color.White.copy(alpha = 0.02f),
+                topTint = ReinColors.Surface,
+                bottomTint = ReinColors.Surface,
             )
             .padding(20.dp),
         horizontalAlignment = Alignment.Start,
@@ -901,8 +827,8 @@ private fun PrivacyCard() {
     GlassSurface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(23.dp),
-        topTint = Color.White.copy(alpha = 0.045f),
-        bottomTint = Color.White.copy(alpha = 0.018f),
+        topTint = ReinColors.Surface,
+        bottomTint = ReinColors.Surface,
         contentPadding = androidx.compose.foundation.layout.PaddingValues(17.dp),
     ) {
         Row(verticalAlignment = Alignment.Top) {

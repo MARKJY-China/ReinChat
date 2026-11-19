@@ -8,7 +8,6 @@ import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -56,7 +55,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -142,31 +140,8 @@ fun ProviderEditorScreen(
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(
-                Brush.verticalGradient(
-                    0f to Color(0xFF0A1411),
-                    0.44f to Color(0xFF060C0A),
-                    1f to Color(0xFF040706),
-                )
-            )
+            .background(MaterialTheme.colorScheme.background)
     ) {
-        Canvas(modifier = Modifier.fillMaxSize()) {
-            drawRect(
-                brush = Brush.radialGradient(
-                    colors = listOf(ReinColors.Mint.copy(alpha = 0.14f), Color.Transparent),
-                    center = androidx.compose.ui.geometry.Offset(size.width * 0.86f, size.height * 0.04f),
-                    radius = size.width * 0.75f,
-                )
-            )
-            drawRect(
-                brush = Brush.radialGradient(
-                    colors = listOf(ReinColors.Violet.copy(alpha = 0.08f), Color.Transparent),
-                    center = androidx.compose.ui.geometry.Offset(size.width * 0.02f, size.height * 0.9f),
-                    radius = size.width * 0.8f,
-                )
-            )
-        }
-
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -307,8 +282,8 @@ fun ProviderEditorScreen(
                         .fillMaxWidth()
                         .liquidGlass(
                             shape = RoundedCornerShape(17.dp),
-                            topTint = Color.White.copy(alpha = 0.045f),
-                            bottomTint = Color.White.copy(alpha = 0.018f),
+                            topTint = ReinColors.Surface,
+                            bottomTint = ReinColors.Surface,
                         )
                         .padding(13.dp),
                 ) {
@@ -351,13 +326,13 @@ fun ProviderEditorScreen(
                                     .weight(1f)
                                     .clip(RoundedCornerShape(9.dp))
                                     .background(
-                                        if (selected) ReinColors.Mint.copy(alpha = 0.13f)
-                                        else Color.White.copy(alpha = 0.035f)
+                                        if (selected) ReinColors.AccentSoft
+                                        else ReinColors.DeepElevated
                                     )
                                     .border(
                                         1.dp,
-                                        if (selected) ReinColors.Mint.copy(alpha = 0.22f)
-                                        else Color.White.copy(alpha = 0.06f),
+                                        if (selected) ReinColors.Mint.copy(alpha = 0.35f)
+                                        else ReinColors.Hairline,
                                         RoundedCornerShape(9.dp),
                                     )
                                     .clickableNoRipple { reasoningEffort = value }
@@ -392,7 +367,7 @@ fun ProviderEditorScreen(
                             modifier = Modifier
                                 .size(30.dp)
                                 .clip(RoundedCornerShape(9.dp))
-                                .background(Color.White.copy(alpha = 0.045f))
+                                .background(ReinColors.DeepElevated)
                                 .clickableNoRipple { showKey = !showKey },
                             contentAlignment = Alignment.Center,
                         ) {
@@ -427,8 +402,8 @@ fun ProviderEditorScreen(
                         .fillMaxWidth()
                         .liquidGlass(
                             shape = RoundedCornerShape(18.dp),
-                            topTint = Color.White.copy(alpha = 0.055f),
-                            bottomTint = Color.White.copy(alpha = 0.02f),
+                            topTint = ReinColors.Surface,
+                            bottomTint = ReinColors.Surface,
                         )
                         .clickable(
                             enabled = signedIn,
@@ -481,16 +456,16 @@ fun ProviderEditorScreen(
                         } else null,
                         enabled = signedIn,
                         colors = SwitchDefaults.colors(
-                            checkedThumbColor = Color(0xFF052019),
+                            checkedThumbColor = ReinColors.OnAccent,
                             checkedTrackColor = ReinColors.Mint,
                             checkedBorderColor = ReinColors.Mint,
                             uncheckedThumbColor = ReinColors.TextTertiary,
-                            uncheckedTrackColor = Color.White.copy(alpha = 0.10f),
-                            uncheckedBorderColor = Color.White.copy(alpha = 0.12f),
-                            disabledCheckedThumbColor = Color(0xFF052019).copy(alpha = 0.5f),
+                            uncheckedTrackColor = ReinColors.DeepElevated,
+                            uncheckedBorderColor = ReinColors.Hairline,
+                            disabledCheckedThumbColor = ReinColors.OnAccent.copy(alpha = 0.5f),
                             disabledCheckedTrackColor = ReinColors.Mint.copy(alpha = 0.35f),
                             disabledUncheckedThumbColor = ReinColors.TextTertiary.copy(alpha = 0.4f),
-                            disabledUncheckedTrackColor = Color.White.copy(alpha = 0.05f),
+                            disabledUncheckedTrackColor = ReinColors.DeepElevated,
                         ),
                     )
                 }
@@ -500,7 +475,7 @@ fun ProviderEditorScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .clip(RoundedCornerShape(15.dp))
-                        .background(Color.White.copy(alpha = 0.032f))
+                        .background(ReinColors.DeepElevated)
                         .clickableNoRipple { advancedOpen = !advancedOpen }
                         .padding(horizontal = 14.dp, vertical = 13.dp),
                     verticalAlignment = Alignment.CenterVertically,
@@ -587,11 +562,6 @@ fun ProviderEditorScreen(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .background(
-                        Brush.verticalGradient(
-                            listOf(Color.Transparent, Color(0xF0080E0C), Color(0xFF080E0C))
-                        )
-                    )
                     .navigationBarsPadding()
                     .padding(horizontal = 22.dp, vertical = 12.dp),
             ) {
@@ -672,8 +642,8 @@ private fun ProtocolSelector(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .background(Color.White.copy(alpha = 0.03f), shape)
-                .border(1.dp, Color.White.copy(alpha = 0.06f), shape)
+                .background(ReinColors.DeepElevated, shape)
+                .border(1.dp, ReinColors.Hairline, shape)
                 .padding(4.dp),
             horizontalArrangement = Arrangement.spacedBy(4.dp),
         ) {
@@ -713,8 +683,8 @@ private fun ProtocolOption(
 ) {
     val interaction = remember { MutableInteractionSource() }
     val background by animateColorAsState(
-        targetValue = if (selected) Color.White.copy(alpha = 0.10f) else Color.Transparent,
-        animationSpec = tween(240, easing = LiquidEase),
+        targetValue = if (selected) ReinColors.Surface else Color.Transparent,
+        animationSpec = tween(200, easing = LiquidEase),
         label = "protocolBg",
     )
     val textColor by animateColorAsState(
@@ -729,7 +699,7 @@ private fun ProtocolOption(
             .then(
                 if (selected) Modifier.border(
                     1.dp,
-                    ReinColors.Mint.copy(alpha = 0.18f),
+                    ReinColors.Hairline,
                     RoundedCornerShape(12.dp)
                 ) else Modifier
             )
@@ -757,8 +727,8 @@ private fun TemplateChip(label: String, onClick: () -> Unit) {
             .pressScale(interaction, 0.96f)
             .liquidGlass(
                 shape = RoundedCornerShape(50),
-                topTint = Color.White.copy(alpha = 0.07f),
-                bottomTint = Color.White.copy(alpha = 0.025f),
+                topTint = ReinColors.Surface,
+                bottomTint = ReinColors.Surface,
             )
             .clip(RoundedCornerShape(50))
             .clickable(interactionSource = interaction, indication = null, onClick = onClick)

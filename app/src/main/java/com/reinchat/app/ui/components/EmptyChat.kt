@@ -1,14 +1,11 @@
 package com.reinchat.app.ui.components
 
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.slideInVertically
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -27,7 +24,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Cloud
 import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material3.Icon
@@ -44,17 +40,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.text.SpanStyle
-import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.reinchat.app.ui.theme.LiquidEase
-import com.reinchat.app.ui.theme.LiquidEaseInOut
 import com.reinchat.app.ui.theme.ReinColors
 import kotlinx.coroutines.delay
 
@@ -72,111 +62,64 @@ fun EmptyChat(
 ) {
     var appeared by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) {
-        delay(80)
+        delay(40)
         appeared = true
     }
-    val floatTransition = rememberInfiniteTransition(label = "heroFloat")
-    val float by floatTransition.animateFloat(
-        initialValue = -3f,
-        targetValue = 3f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(3800, easing = LiquidEaseInOut),
-            repeatMode = androidx.compose.animation.core.RepeatMode.Reverse,
-        ),
-        label = "float",
-    )
 
     Column(
         modifier = modifier
             .fillMaxWidth()
             .verticalScroll(rememberScrollState())
-            .padding(horizontal = 26.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
+            .padding(horizontal = 24.dp),
     ) {
-        Spacer(Modifier.height(22.dp))
+        Spacer(Modifier.height(20.dp))
         AnimatedVisibility(
             visible = appeared,
-            enter = fadeIn(tween(720, easing = LiquidEase)) +
-                slideInVertically(tween(720, easing = LiquidEase)) { it / 5 },
+            enter = fadeIn(tween(420, easing = LiquidEase)) +
+                slideInVertically(tween(420, easing = LiquidEase)) { it / 6 },
         ) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Box(contentAlignment = Alignment.Center) {
-                    Box(
-                        modifier = Modifier
-                            .size(132.dp)
-                            .background(
-                                Brush.radialGradient(
-                                    listOf(
-                                        ReinColors.Mint.copy(alpha = 0.14f),
-                                        ReinColors.Cyan.copy(alpha = 0.05f),
-                                        Color.Transparent,
-                                    )
-                                )
-                            )
-                    )
-                    LiquidOrb(
-                        size = 76.dp,
-                        letter = true,
-                        modifier = Modifier.graphicsLayer { translationY = float.dp.toPx() },
-                    )
-                }
-                Spacer(Modifier.height(20.dp))
+            Column(modifier = Modifier.widthIn(max = 560.dp)) {
                 Text(
-                    text = "R E I N C H A T",
+                    text = "A QUIET PLACE TO THINK",
                     style = MaterialTheme.typography.labelMedium.copy(
-                        letterSpacing = 3.2.sp,
-                        fontSize = 10.sp,
+                        fontSize = 9.5.sp,
+                        letterSpacing = 2.4.sp,
+                        fontWeight = FontWeight.SemiBold,
                     ),
-                    color = ReinColors.Mint.copy(alpha = 0.68f),
+                    color = ReinColors.TextTertiary,
                 )
                 Spacer(Modifier.height(12.dp))
                 Text(
-                    text = buildAnnotatedString {
-                        append("让思绪，")
-                        withStyle(
-                            SpanStyle(
-                                brush = Brush.linearGradient(
-                                    listOf(ReinColors.Mint, ReinColors.Cyan, ReinColors.Violet)
-                                )
-                            )
-                        ) {
-                            append("发生。")
-                        }
-                    },
+                    text = "今天想聊什么？",
                     style = MaterialTheme.typography.displaySmall.copy(
-                        fontSize = 38.sp,
-                        lineHeight = 48.sp,
-                        fontWeight = FontWeight.Light,
-                        letterSpacing = 0.2.sp,
+                        fontSize = 34.sp,
+                        lineHeight = 41.sp,
+                        letterSpacing = (-0.9).sp,
                     ),
                     color = ReinColors.TextPrimary,
                 )
-                Spacer(Modifier.height(10.dp))
+                Spacer(Modifier.height(8.dp))
                 Text(
-                    text = if (providerConfigured) {
-                        "一个安静、顺滑的 AI 对话空间"
-                    } else {
-                        "一个安静、顺滑的 AI 对话空间"
-                    },
+                    text = "一个安静、克制的 AI 对话空间。选择模型，或者直接开始。",
                     style = MaterialTheme.typography.bodyMedium,
-                    color = ReinColors.TextSecondary.copy(alpha = 0.72f),
+                    color = ReinColors.TextSecondary,
                 )
             }
         }
 
-        Spacer(Modifier.height(27.dp))
+        Spacer(Modifier.height(26.dp))
 
         AnimatedVisibility(
             visible = appeared,
-            enter = fadeIn(tween(600, delayMillis = 170, easing = LiquidEase)) +
-                slideInVertically(tween(600, delayMillis = 170, easing = LiquidEase)) { it / 4 },
+            enter = fadeIn(tween(460, delayMillis = 90, easing = LiquidEase)) +
+                slideInVertically(tween(460, delayMillis = 90, easing = LiquidEase)) { it / 8 },
         ) {
             CloudSaveToggle(
                 available = cloudAvailable,
                 enabled = cloudEnabled,
                 onChange = onCloudChange,
                 onLoginClick = onLoginClick,
-                modifier = Modifier.widthIn(max = 440.dp),
+                modifier = Modifier.widthIn(max = 560.dp),
             )
         }
 
@@ -184,54 +127,51 @@ fun EmptyChat(
 
         AnimatedVisibility(
             visible = appeared,
-            enter = fadeIn(tween(600, delayMillis = 240, easing = LiquidEase)) +
-                slideInVertically(tween(600, delayMillis = 240, easing = LiquidEase)) { it / 4 },
+            enter = fadeIn(tween(460, delayMillis = 160, easing = LiquidEase)) +
+                slideInVertically(tween(460, delayMillis = 160, easing = LiquidEase)) { it / 8 },
         ) {
             if (!providerConfigured) {
                 ConnectProviderCard(
                     onConfigure = onConfigure,
-                    modifier = Modifier.widthIn(max = 440.dp),
+                    modifier = Modifier.widthIn(max = 560.dp),
                 )
             } else {
-                Column(
-                    modifier = Modifier.widthIn(max = 520.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                ) {
+                Column(modifier = Modifier.widthIn(max = 560.dp)) {
                     Text(
                         text = "试试这样开始",
-                        style = MaterialTheme.typography.labelMedium.copy(letterSpacing = 1.2.sp),
+                        style = MaterialTheme.typography.labelMedium.copy(letterSpacing = 1.sp),
                         color = ReinColors.TextTertiary,
                     )
-                    Spacer(Modifier.height(13.dp))
+                    Spacer(Modifier.height(10.dp))
                     SuggestionRow(
                         first = "解释一个复杂概念",
                         second = "润色一段文字",
                         onClick = onSuggestion,
                     )
-                    Spacer(Modifier.height(8.dp))
+                    Spacer(Modifier.height(6.dp))
                     SuggestionRow(
                         first = "写一个产品方案",
                         second = "策划一次周末出走",
                         onClick = onSuggestion,
                     )
-                    Spacer(Modifier.height(20.dp))
+                    Spacer(Modifier.height(18.dp))
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Box(
                             modifier = Modifier
-                                .size(4.dp)
+                                .size(5.dp)
                                 .clip(CircleShape)
-                                .background(ReinColors.Mint.copy(alpha = 0.55f))
+                                .background(ReinColors.Mint.copy(alpha = 0.8f))
                         )
                         Spacer(Modifier.width(7.dp))
                         Text(
                             text = providerLabel ?: "已连接服务商",
                             style = MaterialTheme.typography.labelMedium,
-                            color = ReinColors.TextTertiary.copy(alpha = 0.75f),
+                            color = ReinColors.TextTertiary,
                         )
                         Text(
-                            text = "  ·  点按气泡或 ··· 可编辑或回退",
+                            text = "  ·  点按消息可编辑或回退",
                             style = MaterialTheme.typography.labelMedium,
-                            color = ReinColors.TextTertiary.copy(alpha = 0.55f),
+                            color = ReinColors.TextTertiary.copy(alpha = 0.7f),
                         )
                     }
                 }
@@ -250,14 +190,13 @@ private fun CloudSaveToggle(
     onLoginClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val shape = RoundedCornerShape(11.dp)
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .liquidGlass(
-                shape = RoundedCornerShape(19.dp),
-                topTint = Color.White.copy(alpha = 0.065f),
-                bottomTint = Color.White.copy(alpha = 0.022f),
-            )
+            .clip(shape)
+            .background(ReinColors.Surface)
+            .border(1.dp, ReinColors.Hairline, shape)
             .then(
                 if (!available) {
                     Modifier.clickable(
@@ -267,24 +206,21 @@ private fun CloudSaveToggle(
                     )
                 } else Modifier
             )
-            .padding(horizontal = 14.dp, vertical = 11.dp),
+            .padding(horizontal = 13.dp, vertical = 11.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(
             modifier = Modifier
-                .size(32.dp)
-                .clip(CircleShape)
-                .background(
-                    if (enabled) ReinColors.Mint.copy(alpha = 0.10f)
-                    else Color.White.copy(alpha = 0.04f)
-                ),
+                .size(30.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .background(if (enabled) ReinColors.AccentSoft else ReinColors.DeepElevated),
             contentAlignment = Alignment.Center,
         ) {
             Icon(
                 imageVector = Icons.Rounded.Cloud,
                 contentDescription = null,
-                tint = if (enabled) ReinColors.Mint else ReinColors.TextTertiary.copy(alpha = 0.6f),
-                modifier = Modifier.size(16.dp),
+                tint = if (enabled) ReinColors.Mint else ReinColors.TextTertiary,
+                modifier = Modifier.size(15.dp),
             )
         }
         Spacer(Modifier.width(10.dp))
@@ -292,16 +228,16 @@ private fun CloudSaveToggle(
             Text(
                 text = "聊天记录保存云端",
                 style = MaterialTheme.typography.labelLarge,
-                color = ReinColors.TextPrimary.copy(alpha = if (available) 0.9f else 0.55f),
+                color = ReinColors.TextPrimary.copy(alpha = if (available) 0.92f else 0.55f),
             )
             Text(
                 text = when {
                     !available -> "登录后可开启跨设备同步"
-                    enabled -> "开启后不可关闭，可跨设备继续"
+                    enabled -> "已开启，可跨设备继续"
                     else -> "本会话仅保存在此设备，发送后不可再开启"
                 },
-                style = MaterialTheme.typography.labelMedium.copy(fontSize = 9.5.sp),
-                color = ReinColors.TextTertiary.copy(alpha = 0.8f),
+                style = MaterialTheme.typography.labelMedium.copy(fontSize = 9.5.sp, lineHeight = 14.sp),
+                color = ReinColors.TextTertiary,
             )
         }
         if (!available) {
@@ -311,12 +247,12 @@ private fun CloudSaveToggle(
                 checked = enabled,
                 onCheckedChange = onChange,
                 colors = SwitchDefaults.colors(
-                    checkedThumbColor = Color(0xFF052019),
+                    checkedThumbColor = ReinColors.OnAccent,
                     checkedTrackColor = ReinColors.Mint,
                     checkedBorderColor = ReinColors.Mint,
                     uncheckedThumbColor = ReinColors.TextTertiary,
-                    uncheckedTrackColor = Color.White.copy(alpha = 0.10f),
-                    uncheckedBorderColor = Color.White.copy(alpha = 0.12f),
+                    uncheckedTrackColor = ReinColors.DeepElevated,
+                    uncheckedBorderColor = ReinColors.Hairline,
                 ),
             )
         }
@@ -331,7 +267,7 @@ private fun SuggestionRow(
 ) {
     Row(
         modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        horizontalArrangement = Arrangement.spacedBy(7.dp),
     ) {
         SuggestionChip(text = first, onClick = { onClick(first) }, modifier = Modifier.weight(1f))
         SuggestionChip(text = second, onClick = { onClick(second) }, modifier = Modifier.weight(1f))
@@ -341,31 +277,29 @@ private fun SuggestionRow(
 @Composable
 private fun SuggestionChip(text: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
     val interaction = remember { MutableInteractionSource() }
+    val shape = RoundedCornerShape(9.dp)
     Row(
         modifier = modifier
-            .pressScale(interaction, 0.97f)
-            .liquidGlass(
-                shape = RoundedCornerShape(18.dp),
-                topTint = Color.White.copy(alpha = 0.088f),
-                bottomTint = Color.White.copy(alpha = 0.028f),
-            )
-            .clip(RoundedCornerShape(18.dp))
+            .pressScale(interaction, 0.98f)
+            .clip(shape)
+            .background(ReinColors.Surface)
+            .border(1.dp, ReinColors.Hairline, shape)
             .clickable(interactionSource = interaction, indication = null, onClick = onClick)
-            .padding(horizontal = 13.dp, vertical = 14.dp),
+            .padding(horizontal = 12.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(
-            imageVector = Icons.Rounded.AutoAwesome,
-            contentDescription = null,
-            tint = ReinColors.Mint.copy(alpha = 0.65f),
-            modifier = Modifier.size(14.dp),
-        )
-        Spacer(Modifier.width(8.dp))
         Text(
             text = text,
-            style = MaterialTheme.typography.labelLarge,
+            style = MaterialTheme.typography.labelLarge.copy(fontSize = 12.5.sp, lineHeight = 17.sp),
             color = ReinColors.TextSecondary,
             maxLines = 2,
+            modifier = Modifier.weight(1f),
+        )
+        Spacer(Modifier.width(6.dp))
+        Text(
+            text = "→",
+            style = MaterialTheme.typography.labelLarge,
+            color = ReinColors.TextTertiary,
         )
     }
 }
@@ -375,61 +309,43 @@ private fun ConnectProviderCard(
     onConfigure: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val shape = RoundedCornerShape(13.dp)
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .liquidGlass(
-                shape = RoundedCornerShape(28.dp),
-                topTint = Color.White.copy(alpha = 0.098f),
-                bottomTint = Color.White.copy(alpha = 0.032f),
-                glowColor = ReinColors.Mint.copy(alpha = 0.10f),
-                elevation = 10.dp,
-            )
-            .padding(20.dp),
+            .clip(shape)
+            .background(ReinColors.Surface)
+            .border(1.dp, ReinColors.Hairline, shape)
+            .padding(18.dp),
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(
-                modifier = Modifier
-                    .size(34.dp)
-                    .clip(CircleShape)
-                    .background(ReinColors.Mint.copy(alpha = 0.09f)),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    imageVector = Icons.Rounded.AutoAwesome,
-                    contentDescription = null,
-                    tint = ReinColors.Mint,
-                    modifier = Modifier.size(17.dp),
-                )
-            }
-            Spacer(Modifier.width(11.dp))
-            Column {
-                Text(
-                    text = "先连接一个模型",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    color = ReinColors.TextPrimary,
-                )
-                Text(
-                    text = "支持 Responses 与 Chat Completions",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = ReinColors.TextTertiary,
-                )
-            }
-        }
-        Spacer(Modifier.height(14.dp))
         Text(
-            text = "填入 Base URL、模型名称与 API Key，即可开始对话。密钥默认只留在本机；登录后可选择把部分服务商和云端会话同步到账号。",
-            style = MaterialTheme.typography.bodyMedium.copy(lineHeight = 21.sp),
-            color = ReinColors.TextSecondary.copy(alpha = 0.86f),
+            text = "SETUP",
+            style = MaterialTheme.typography.labelMedium.copy(
+                fontSize = 9.sp,
+                letterSpacing = 2.sp,
+                fontWeight = FontWeight.SemiBold,
+            ),
+            color = ReinColors.TextTertiary,
         )
-        Spacer(Modifier.height(17.dp))
+        Spacer(Modifier.height(8.dp))
+        Text(
+            text = "先连接一个模型",
+            style = MaterialTheme.typography.headlineSmall.copy(fontSize = 18.sp),
+            color = ReinColors.TextPrimary,
+        )
+        Spacer(Modifier.height(5.dp))
+        Text(
+            text = "支持 Responses 与 Chat Completions。填入 Base URL、模型名称与 API Key，即可开始对话。",
+            style = MaterialTheme.typography.bodyMedium.copy(lineHeight = 20.sp),
+            color = ReinColors.TextSecondary,
+        )
+        Spacer(Modifier.height(15.dp))
         LiquidPrimaryButton(
             text = "配置 AI 服务商",
             onClick = onConfigure,
             modifier = Modifier.fillMaxWidth(),
         )
-        Spacer(Modifier.height(12.dp))
+        Spacer(Modifier.height(11.dp))
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.Center,
@@ -438,14 +354,15 @@ private fun ConnectProviderCard(
             Icon(
                 imageVector = Icons.Rounded.Lock,
                 contentDescription = null,
-                tint = ReinColors.TextTertiary.copy(alpha = 0.64f),
-                modifier = Modifier.size(11.dp),
+                tint = ReinColors.TextTertiary,
+                modifier = Modifier.size(10.dp),
             )
             Spacer(Modifier.width(5.dp))
             Text(
                 text = "本机加密存储 · 请求直连服务商",
-                style = MaterialTheme.typography.labelMedium.copy(fontSize = 10.sp),
-                color = ReinColors.TextTertiary.copy(alpha = 0.62f),
+                style = MaterialTheme.typography.labelMedium.copy(fontSize = 9.5.sp),
+                color = ReinColors.TextTertiary.copy(alpha = 0.8f),
+                textAlign = TextAlign.Center,
             )
         }
     }

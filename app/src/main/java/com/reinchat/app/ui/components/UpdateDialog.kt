@@ -23,9 +23,6 @@ import com.reinchat.app.update.AppUpdate
 import com.reinchat.app.update.UpdateDownloadState
 import com.reinchat.app.ui.theme.ReinColors
 
-private val NeonGreen = Color(0xFF8BFFC4)
-private val LightGray = Color(0xFFB8C4BF)
-
 @Composable
 fun UpdateDialog(
     update: AppUpdate,
@@ -77,13 +74,13 @@ fun UpdateDialog(
                             Modifier
                                 .fillMaxWidth()
                                 .height(5.dp)
-                                .background(Color.White.copy(alpha = 0.10f))
+                                .background(ReinColors.Hairline)
                         ) {
                             Box(
                                 Modifier
                                     .fillMaxWidth(download.progress.coerceIn(0f, 1f))
                                     .height(5.dp)
-                                    .background(NeonGreen)
+                                    .background(ReinColors.Mint)
                             )
                         }
                         Spacer(Modifier.height(6.dp))
@@ -99,7 +96,7 @@ fun UpdateDialog(
                     }
                     is UpdateDownloadState.Ready -> Text(
                         text = "下载完成，点击“安装更新”。",
-                        color = NeonGreen,
+                        color = ReinColors.Mint,
                         style = MaterialTheme.typography.labelMedium,
                     )
                     is UpdateDownloadState.Failed -> Text(
@@ -119,7 +116,7 @@ fun UpdateDialog(
                     is UpdateDownloadState.Ready -> onInstall
                     else -> onDownload
                 },
-                colors = ButtonDefaults.textButtonColors(contentColor = NeonGreen),
+                colors = ButtonDefaults.textButtonColors(contentColor = ReinColors.Mint),
             ) {
                 Text(
                     when (download) {
@@ -134,12 +131,12 @@ fun UpdateDialog(
         dismissButton = {
             TextButton(
                 onClick = onBrowse,
-                colors = ButtonDefaults.textButtonColors(contentColor = LightGray),
+                colors = ButtonDefaults.textButtonColors(contentColor = ReinColors.TextSecondary),
             ) {
                 Text("前往浏览器下载")
             }
         },
-        containerColor = ReinColors.Deep,
+        containerColor = ReinColors.Surface,
         titleContentColor = ReinColors.TextPrimary,
         textContentColor = ReinColors.TextSecondary,
     )

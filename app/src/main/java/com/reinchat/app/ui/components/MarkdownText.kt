@@ -245,15 +245,7 @@ private fun RenderBlock(
                     .fillMaxWidth()
                     .padding(vertical = 6.dp)
                     .height(1.dp)
-                    .background(
-                        Brush.horizontalGradient(
-                            listOf(
-                                Color.Transparent,
-                                Color.White.copy(alpha = 0.18f),
-                                Color.Transparent,
-                            )
-                        )
-                    )
+                    .background(ReinColors.Hairline)
             )
         }
     }
@@ -266,13 +258,13 @@ private fun MarkdownTable(block: MdBlock.Table, color: Color) {
         modifier = Modifier
             .fillMaxWidth()
             .clip(shape)
-            .background(Color.White.copy(alpha = 0.028f))
-            .border(1.dp, Color.White.copy(alpha = 0.08f), shape),
+            .background(ReinColors.Surface)
+            .border(1.dp, ReinColors.Hairline, shape),
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .background(ReinColors.Mint.copy(alpha = 0.055f)),
+                .background(ReinColors.DeepElevated),
             verticalAlignment = Alignment.Top,
         ) {
             block.header.forEachIndexed { index, cell ->
@@ -293,7 +285,7 @@ private fun MarkdownTable(block: MdBlock.Table, color: Color) {
                 Modifier
                     .fillMaxWidth()
                     .height(1.dp)
-                    .background(Color.White.copy(alpha = 0.06f))
+                    .background(ReinColors.Hairline)
             )
             Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
                 row.forEachIndexed { index, cell ->
@@ -337,13 +329,13 @@ private fun CodeBlockCard(block: MdBlock.CodeBlock, streaming: Boolean, caretAlp
         modifier = Modifier
             .fillMaxWidth()
             .clip(shape)
-            .background(Color(0xCC080E0C))
-            .border(1.dp, Color.White.copy(alpha = 0.08f), shape)
+            .background(ReinColors.DeepElevated)
+            .border(1.dp, ReinColors.Hairline, shape)
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .background(Color.White.copy(alpha = 0.028f))
+                .background(ReinColors.Surface.copy(alpha = 0.6f))
                 .padding(start = 14.dp, end = 6.dp, top = 4.dp, bottom = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -391,7 +383,7 @@ private fun CodeBlockCard(block: MdBlock.CodeBlock, streaming: Boolean, caretAlp
                     fontFamily = FontFamily.Monospace,
                     fontSize = 13.sp,
                     lineHeight = 20.sp,
-                    color = Color(0xFFD6E5DF),
+                    color = ReinColors.TextPrimary,
                 ),
                 softWrap = false,
             )
@@ -401,7 +393,7 @@ private fun CodeBlockCard(block: MdBlock.CodeBlock, streaming: Boolean, caretAlp
                     .drawBehind {
                         drawRect(
                             brush = Brush.horizontalGradient(
-                                colors = listOf(Color.Transparent, Color(0xE6080E0C)),
+                                colors = listOf(Color.Transparent, ReinColors.DeepElevated),
                                 startX = size.width - 34.dp.toPx(),
                                 endX = size.width,
                             )
@@ -417,8 +409,8 @@ private fun CopyIconButton(copied: Boolean, onClick: () -> Unit) {
     Box(
         modifier = Modifier
             .size(32.dp)
-            .clip(RoundedCornerShape(9.dp))
-            .background(Color.White.copy(alpha = 0.045f))
+            .clip(RoundedCornerShape(7.dp))
+            .background(ReinColors.TextPrimary.copy(alpha = 0.05f))
             .clickableNoRipple(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
@@ -479,9 +471,9 @@ private fun AnnotatedString.Builder.appendInlines(
                 style.merge(
                     SpanStyle(
                         fontFamily = FontFamily.Monospace,
-                        fontSize = 14.sp,
+                        fontSize = 13.sp,
                         color = ReinColors.Mint,
-                        background = Color(0x2A7BE6C2),
+                        background = ReinColors.AccentSoft,
                     )
                 )
             ) {

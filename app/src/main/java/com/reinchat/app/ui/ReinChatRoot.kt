@@ -1,24 +1,30 @@
 package com.reinchat.app.ui
 
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
+import android.content.Intent
+import android.net.Uri
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
-import android.content.Intent
-import android.net.Uri
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -26,11 +32,12 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.blur
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
+import androidx.core.view.WindowCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -44,7 +51,10 @@ import com.reinchat.app.ui.screens.ChatScreen
 import com.reinchat.app.ui.screens.SessionDrawerOverlay
 import com.reinchat.app.ui.screens.SettingsScreen
 import com.reinchat.app.ui.theme.LiquidEase
+import com.reinchat.app.ui.theme.LocalReinThemeControl
 import com.reinchat.app.ui.theme.ReinColors
+import com.reinchat.app.ui.theme.ReinTheme
+import com.reinchat.app.ui.theme.ReinThemeControl
 import com.reinchat.app.update.UpdateDownloadState
 import com.reinchat.app.update.installDownloadedApk
 import com.reinchat.app.vm.ChatEvent
@@ -52,10 +62,46 @@ import com.reinchat.app.vm.ChatViewModel
 
 enum class RootMode { FUSED, CONTENT, CHROME }
 
+/**
+ * Owns the small amount of UI state the theme toggle needs. No data-layer changes:
+ * the default is still the system theme, and an explicit toggle is remembered only
+ * for this process via [rememberSaveable].
+ */
 @Composable
 fun ReinChatRoot(
     viewModel: ChatViewModel = viewModel(),
     mode: RootMode = RootMode.FUSED,
+) {
+    val systemDark = isSystemInDarkTheme()
+    // 0 = follow the system, 1 = force dark, 2 = force light.
+    var themeChoice by rememberSaveable { mutableStateOf(0) }
+    val darkTheme = when (themeChoice) {
+        1 -> true
+        2 -> false
+        else -> systemDark
+    }
+
+    ReinTheme(darkTheme = darkTheme) {
+        CompositionLocalProvider(
+            LocalReinThemeControl provides ReinThemeControl(
+                darkTheme = darkTheme,
+                onToggle = { themeChoice = if (darkTheme) 2 else 1 },
+            )
+        ) {
+            ReinChatRootContent(
+                viewModel = viewModel,
+                mode = mode,
+                darkTheme = darkTheme,
+            )
+        }
+    }
+}
+
+@Composable
+private fun ReinChatRootContent(
+    viewModel: ChatViewModel,
+    mode: RootMode,
+    darkTheme: Boolean,
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
@@ -64,13 +110,15 @@ fun ReinChatRoot(
     var focusProviderId by rememberSaveable { mutableStateOf<String?>(null) }
     val lifecycleOwner = LocalLifecycleOwner.current
     val context = LocalContext.current
+    val view = LocalView.current
 
-    val overlayOpen = drawerOpen || settingsOpen
-    val blurRadius by animateDpAsState(
-        targetValue = if (overlayOpen && mode == RootMode.FUSED) 14.dp else 0.dp,
-        animationSpec = tween(380, easing = LiquidEase),
-        label = "overlayBlur",
-    )
+    SideEffect {
+        val activity = context.findActivity() ?: return@SideEffect
+        WindowCompat.getInsetsController(activity.window, view).apply {
+            isAppearanceLightStatusBars = !darkTheme
+            isAppearanceLightNavigationBars = !darkTheme
+        }
+    }
 
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
@@ -109,95 +157,89 @@ fun ReinChatRoot(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(if (mode == RootMode.CHROME) Color.Transparent else ReinColors.Deep),
+            .background(if (mode == RootMode.CHROME) Color.Transparent else MaterialTheme.colorScheme.background),
     ) {
         if (mode != RootMode.CHROME) AuroraBackground()
 
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .then(if (blurRadius > 0.1.dp) Modifier.blur(blurRadius) else Modifier)
-        ) {
-            ChatScreen(
-                state = state,
-                providers = state.settings.providers,
-                snackbarHostState = snackbarHostState,
-                onOpenDrawer = { drawerOpen = true },
-                onNewChat = { viewModel.newConversation() },
-                onOpenSettings = {
-                    focusProviderId = null
-                    settingsOpen = true
-                },
-                onDraftChange = viewModel::setDraft,
-                onAddImages = viewModel::addImages,
-                onRemoveAttachment = viewModel::removeAttachment,
-                onSend = viewModel::send,
-                onStop = viewModel::stopStreaming,
-                onCancelEdit = viewModel::cancelEdit,
-                onSelectProvider = viewModel::setActiveProvider,
-                onSelectModel = viewModel::setActiveModel,
-                onSelectReasoningEffort = viewModel::setReasoningEffort,
-                onToggleWebSearch = viewModel::toggleWebSearch,
-                onRetryMessage = viewModel::retryResponse,
-                onEditMessage = viewModel::beginEdit,
-                onRewind = viewModel::rewindTo,
-                onUndoRewind = viewModel::undoRewind,
-                onSetNewChatCloud = viewModel::setNewChatCloud,
-                renderContent = mode != RootMode.CHROME,
-                renderChrome = mode != RootMode.CONTENT,
-            )
-        }
-
-        if (mode != RootMode.CONTENT) {
-        SessionDrawerOverlay(
-            visible = drawerOpen,
-            conversations = state.conversations,
-            activeConversationId = state.activeConversationId,
-            onClose = { drawerOpen = false },
-            onNew = viewModel::newConversation,
-            onSelect = viewModel::selectConversation,
-            onRename = viewModel::renameConversation,
-            onDelete = viewModel::deleteConversation,
+        ChatScreen(
+            state = state,
+            providers = state.settings.providers,
+            snackbarHostState = snackbarHostState,
+            onOpenDrawer = { drawerOpen = true },
+            onNewChat = { viewModel.newConversation() },
             onOpenSettings = {
                 focusProviderId = null
                 settingsOpen = true
             },
+            onDraftChange = viewModel::setDraft,
+            onAddImages = viewModel::addImages,
+            onRemoveAttachment = viewModel::removeAttachment,
+            onSend = viewModel::send,
+            onStop = viewModel::stopStreaming,
+            onCancelEdit = viewModel::cancelEdit,
+            onSelectProvider = viewModel::setActiveProvider,
+            onSelectModel = viewModel::setActiveModel,
+            onSelectReasoningEffort = viewModel::setReasoningEffort,
+            onToggleWebSearch = viewModel::toggleWebSearch,
+            onRetryMessage = viewModel::retryResponse,
+            onEditMessage = viewModel::beginEdit,
+            onRewind = viewModel::rewindTo,
+            onUndoRewind = viewModel::undoRewind,
+            onSetNewChatCloud = viewModel::setNewChatCloud,
+            renderContent = mode != RootMode.CHROME,
+            renderChrome = mode != RootMode.CONTENT,
         )
 
-        AnimatedVisibility(
-            visible = settingsOpen,
-            modifier = Modifier.fillMaxSize().zIndex(3f),
-            enter = slideInVertically(
-                initialOffsetY = { it },
-                animationSpec = tween(460, easing = LiquidEase),
-            ) + fadeIn(tween(260)),
-            exit = slideOutVertically(
-                targetOffsetY = { it },
-                animationSpec = tween(320, easing = LiquidEase),
-            ) + fadeOut(tween(180)),
-        ) {
-            SettingsScreen(
-                providers = state.settings.providers,
-                activeProviderId = state.settings.activeProviderId,
-                account = state.account,
-                cloudServerUrl = state.settings.cloudServerUrl,
-                cloudSyncing = state.cloudSyncing,
-                cloudError = state.cloudError,
-                authBusy = state.authBusy,
-                authError = state.authError,
-                focusProviderId = focusProviderId,
-                onFocusConsumed = { focusProviderId = null },
-                onClose = { settingsOpen = false },
-                onSaveProvider = viewModel::saveProvider,
-                onSetActiveProvider = viewModel::setActiveProvider,
-                onDeleteProvider = viewModel::deleteProvider,
-                onLogin = viewModel::login,
-                onRegister = viewModel::register,
-                onLogout = viewModel::logout,
-                onSyncCloud = viewModel::syncCloudNow,
-                onClearAuthError = viewModel::clearAuthError,
+        if (mode != RootMode.CONTENT) {
+            SessionDrawerOverlay(
+                visible = drawerOpen,
+                conversations = state.conversations,
+                activeConversationId = state.activeConversationId,
+                onClose = { drawerOpen = false },
+                onNew = viewModel::newConversation,
+                onSelect = viewModel::selectConversation,
+                onRename = viewModel::renameConversation,
+                onDelete = viewModel::deleteConversation,
+                onOpenSettings = {
+                    focusProviderId = null
+                    settingsOpen = true
+                },
             )
-        }
+
+            AnimatedVisibility(
+                visible = settingsOpen,
+                modifier = Modifier.fillMaxSize().zIndex(3f),
+                enter = slideInVertically(
+                    initialOffsetY = { it },
+                    animationSpec = tween(320, easing = LiquidEase),
+                ) + fadeIn(tween(180)),
+                exit = slideOutVertically(
+                    targetOffsetY = { it },
+                    animationSpec = tween(260, easing = LiquidEase),
+                ) + fadeOut(tween(160)),
+            ) {
+                SettingsScreen(
+                    providers = state.settings.providers,
+                    activeProviderId = state.settings.activeProviderId,
+                    account = state.account,
+                    cloudServerUrl = state.settings.cloudServerUrl,
+                    cloudSyncing = state.cloudSyncing,
+                    cloudError = state.cloudError,
+                    authBusy = state.authBusy,
+                    authError = state.authError,
+                    focusProviderId = focusProviderId,
+                    onFocusConsumed = { focusProviderId = null },
+                    onClose = { settingsOpen = false },
+                    onSaveProvider = viewModel::saveProvider,
+                    onSetActiveProvider = viewModel::setActiveProvider,
+                    onDeleteProvider = viewModel::deleteProvider,
+                    onLogin = viewModel::login,
+                    onRegister = viewModel::register,
+                    onLogout = viewModel::logout,
+                    onSyncCloud = viewModel::syncCloudNow,
+                    onClearAuthError = viewModel::clearAuthError,
+                )
+            }
         }
 
         state.update?.let { update ->
@@ -224,8 +266,17 @@ fun ReinChatRoot(
             modifier = Modifier
                 .align(Alignment.TopCenter)
                 .statusBarsPadding()
-                .padding(top = 68.dp)
+                .padding(top = 64.dp)
                 .zIndex(20f),
         )
     }
+}
+
+private fun Context.findActivity(): Activity? {
+    var current: Context = this
+    while (current is ContextWrapper) {
+        if (current is Activity) return current
+        current = current.baseContext
+    }
+    return current as? Activity
 }

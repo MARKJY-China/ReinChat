@@ -28,8 +28,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
@@ -37,6 +36,7 @@ import androidx.compose.ui.unit.sp
 import com.reinchat.app.ui.theme.LiquidEase
 import com.reinchat.app.ui.theme.ReinColors
 
+/** Flat hairline field used by auth, provider and rename forms. */
 @Composable
 fun GlassInputField(
     value: String,
@@ -59,33 +59,33 @@ fun GlassInputField(
     var focused by remember { mutableStateOf(false) }
     val borderColor by animateColorAsState(
         targetValue = when {
-            isError -> ReinColors.Danger.copy(alpha = 0.55f)
-            focused -> ReinColors.Mint.copy(alpha = 0.36f)
-            else -> Color.White.copy(alpha = 0.11f)
+            isError -> ReinColors.Danger.copy(alpha = 0.65f)
+            focused -> ReinColors.HairlineStrong
+            else -> ReinColors.Hairline
         },
-        animationSpec = tween(280, easing = LiquidEase),
+        animationSpec = tween(180, easing = LiquidEase),
         label = "inputBorder",
     )
-    val shape = RoundedCornerShape(17.dp)
+    val shape = RoundedCornerShape(9.dp)
 
     Column(modifier = modifier.fillMaxWidth()) {
         Text(
             text = label,
             style = MaterialTheme.typography.labelMedium,
-            color = if (isError) ReinColors.Danger.copy(alpha = 0.9f) else ReinColors.TextTertiary,
+            color = if (isError) ReinColors.Danger.copy(alpha = 0.9f) else ReinColors.TextSecondary,
         )
-        Spacer(Modifier.heightIn(min = 7.dp))
+        Spacer(Modifier.heightIn(min = 6.dp))
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .background(Color.White.copy(alpha = if (focused) 0.075f else 0.052f), shape)
+                .background(ReinColors.Surface, shape)
                 .border(1.dp, borderColor, shape)
-                .padding(horizontal = 13.dp, vertical = if (singleLine) 12.dp else 11.dp),
+                .padding(horizontal = 12.dp, vertical = if (singleLine) 11.dp else 10.dp),
             verticalAlignment = if (singleLine) Alignment.CenterVertically else Alignment.Top,
         ) {
             leading?.let {
                 it()
-                Spacer(Modifier.width(9.dp))
+                Spacer(Modifier.width(8.dp))
             }
             Box(
                 modifier = Modifier
@@ -96,9 +96,9 @@ fun GlassInputField(
                     Text(
                         text = placeholder,
                         style = LocalTextStyle.current.copy(
-                            fontSize = 14.sp,
+                            fontSize = 13.5.sp,
                             lineHeight = 21.sp,
-                            color = ReinColors.TextTertiary.copy(alpha = 0.72f),
+                            color = ReinColors.Placeholder,
                         ),
                     )
                 }
@@ -111,11 +111,11 @@ fun GlassInputField(
                     enabled = enabled,
                     textStyle = TextStyle(
                         color = if (enabled) ReinColors.TextPrimary else ReinColors.TextTertiary,
-                        fontSize = 14.sp,
+                        fontSize = 13.5.sp,
                         lineHeight = 21.sp,
                         fontFamily = MaterialTheme.typography.bodyMedium.fontFamily,
                     ),
-                    cursorBrush = Brush.verticalGradient(listOf(ReinColors.Mint, ReinColors.Cyan)),
+                    cursorBrush = SolidColor(ReinColors.Mint),
                     singleLine = singleLine,
                     minLines = minLines,
                     maxLines = maxLines,
@@ -125,16 +125,16 @@ fun GlassInputField(
                 )
             }
             trailing?.let {
-                Spacer(Modifier.width(8.dp))
+                Spacer(Modifier.width(6.dp))
                 it()
             }
         }
         if (supportingText != null) {
             Text(
                 text = supportingText,
-                style = MaterialTheme.typography.labelMedium.copy(fontSize = 10.sp),
-                color = if (isError) ReinColors.Danger.copy(alpha = 0.8f) else ReinColors.TextTertiary.copy(alpha = 0.75f),
-                modifier = Modifier.padding(start = 2.dp, top = 6.dp),
+                style = MaterialTheme.typography.labelMedium.copy(fontSize = 10.sp, lineHeight = 15.sp),
+                color = if (isError) ReinColors.Danger.copy(alpha = 0.8f) else ReinColors.TextTertiary,
+                modifier = Modifier.padding(start = 2.dp, top = 5.dp),
             )
         }
     }
@@ -150,17 +150,13 @@ fun SearchField(
     trailing: (@Composable () -> Unit)? = null,
 ) {
     var focused by remember { mutableStateOf(false) }
-    val shape = RoundedCornerShape(16.dp)
+    val shape = RoundedCornerShape(8.dp)
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .background(Color.White.copy(alpha = 0.045f), shape)
-            .border(
-                1.dp,
-                if (focused) ReinColors.Mint.copy(alpha = 0.22f) else Color.White.copy(alpha = 0.06f),
-                shape,
-            )
-            .padding(horizontal = 13.dp, vertical = 11.dp),
+            .background(ReinColors.DeepElevated, shape)
+            .border(1.dp, if (focused) ReinColors.HairlineStrong else ReinColors.Hairline, shape)
+            .padding(horizontal = 11.dp, vertical = 9.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         leading?.invoke()
@@ -170,7 +166,7 @@ fun SearchField(
                 Text(
                     text = placeholder,
                     style = MaterialTheme.typography.bodyMedium,
-                    color = ReinColors.TextTertiary.copy(alpha = 0.7f),
+                    color = ReinColors.Placeholder,
                 )
             }
             BasicTextField(
@@ -181,10 +177,10 @@ fun SearchField(
                     .onFocusChanged { focused = it.isFocused },
                 textStyle = TextStyle(
                     color = ReinColors.TextPrimary,
-                    fontSize = 14.sp,
+                    fontSize = 13.5.sp,
                     lineHeight = 20.sp,
                 ),
-                cursorBrush = Brush.verticalGradient(listOf(ReinColors.Mint, ReinColors.Cyan)),
+                cursorBrush = SolidColor(ReinColors.Mint),
                 singleLine = true,
             )
         }
