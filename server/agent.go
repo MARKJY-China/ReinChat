@@ -36,7 +36,19 @@ func (s *Server) runRelaySearchAgent(ctx context.Context, jobID string, p *relay
 			if strings.TrimSpace(message.PDFText) != "" {
 				content += "\n\n[附件 PDF：" + message.PDFName + "]\n" + message.PDFText
 			}
-			base = append(base, map[string]any{"role": message.Role, "content": content})
+			parts, err := s.imageContentParts(message.Images)
+			if err != nil {
+				return false
+			}
+			if len(parts) > 0 {
+				multimodal := []any{map[string]any{"type": "text", "text": content}}
+				for _, part := range parts {
+					multimodal = append(multimodal, part)
+				}
+				base = append(base, map[string]any{"role": message.Role, "content": multimodal})
+			} else {
+				base = append(base, map[string]any{"role": message.Role, "content": content})
+			}
 		}
 	}
 	tools := []map[string]any{

@@ -5,11 +5,14 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -406,7 +409,7 @@ func (s *Server) runRelayJob(ctx context.Context, userID int64, jobID string, p 
 			s.relay.publish(jobID, relayEvent{Type: "status", Status: "searching"})
 		}
 	}
-	req, err := buildRelayRequest(ctx, p, model, effort, messages)
+	req, err := s.buildRelayRequest(ctx, p, model, effort, messages)
 	if err != nil {
 		fail("request_error", err.Error())
 		return
@@ -477,7 +480,7 @@ func (s *Server) runRelayJob(ctx context.Context, userID int64, jobID string, p 
 	s.relay.publish(jobID, relayEvent{Type: "status", Status: "completed"})
 }
 
-func buildRelayRequest(ctx context.Context, p *relayProvider, model, effort string, messages []MessageDTO) (*http.Request, error) {
+func (s *Server) buildRelayRequest(ctx context.Context, p *relayProvider, model, effort string, messages []MessageDTO) (*http.Request, error) {
 	base := strings.TrimRight(strings.TrimSpace(p.BaseURL), "/")
 	if base == "" {
 		return nil, errors.New("服务商 Base URL 为空")
@@ -498,7 +501,19 @@ func buildRelayRequest(ctx context.Context, p *relayProvider, model, effort stri
 		if strings.TrimSpace(m.PDFText) != "" {
 			content += "\n\n[附件 PDF：" + m.PDFName + "]\n" + m.PDFText
 		}
-		list = append(list, map[string]any{"role": m.Role, "content": content})
+		parts, err := s.imageContentParts(m.Images)
+		if err != nil {
+			return nil, err
+		}
+		if len(parts) > 0 {
+			multimodal := []any{map[string]any{"type": "text", "text": content}}
+			for _, part := range parts {
+				multimodal = append(multimodal, part)
+			}
+			list = append(list, map[string]any{"role": m.Role, "content": multimodal})
+		} else {
+			list = append(list, map[string]any{"role": m.Role, "content": content})
+		}
 	}
 	chat["messages"] = list
 	if p.Temperature != nil {
@@ -541,6 +556,30 @@ func buildRelayRequest(ctx context.Context, p *relayProvider, model, effort stri
 		req.Header.Set("Authorization", "Bearer "+p.APIKey)
 	}
 	return req, nil
+}
+
+func (s *Server) imageContentParts(images []ImageDTO) ([]any, error) {
+	parts := make([]any, 0, len(images))
+	for _, image := range images {
+		if image.ID == "" {
+			continue
+		}
+		raw, err := os.ReadFile(filepath.Join(s.filesDir, image.ID))
+		if err != nil {
+			return nil, errors.New("无法读取附件图片")
+		}
+		mimeType := image.MimeType
+		if mimeType == "" {
+			mimeType = "image/png"
+		}
+		parts = append(parts, map[string]any{
+			"type": "image_url",
+			"image_url": map[string]any{
+				"url": "data:" + mimeType + ";base64," + base64.StdEncoding.EncodeToString(raw),
+			},
+		})
+	}
+	return parts, nil
 }
 
 func parseRelayDelta(protocol, raw string) (text, reasoning string, done bool) {
