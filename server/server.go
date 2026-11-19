@@ -273,6 +273,10 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if path == "/api/v1/pdf/ocr" {
+		s.handlePDFOCR(w, r)
+		return
+	}
 	if path == "/api/v1/provider-models" {
 		s.handleProviderModelsFetch(w, r)
 		return

@@ -568,8 +568,15 @@ export default {
       this.pdfBusy = true; this.authError = ''; this.pdfError = '';
       try {
         const parsed = await extractPdfText(file);
+        if (!parsed.text) {
+          this.pdfError = '未检测到文字层，正在进行 OCR…';
+          const ocr = await this.api.ocrPdf(file);
+          parsed.text = ocr.text;
+          parsed.pages = ocr.pages || parsed.pages;
+        }
         this.pdfAttachment = parsed;
         if (!parsed.text) this.pdfError = 'PDF 中没有可提取的文字（可能是扫描件）';
+        else this.pdfError = '';
       } catch (e) { this.pdfError = 'PDF 解析失败：' + (e.message || '未知错误'); } finally { this.pdfBusy = false; }
     },
     async sendText(text, retry, pdf, images) {
