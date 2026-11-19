@@ -441,3 +441,26 @@ html.dark .thread:hover::-webkit-scrollbar-thumb { background: rgba(235,231,220,
 .tool-detail pre::-webkit-scrollbar-thumb { background: rgba(120,115,105,.28); border-radius: 99px; }
 .tool-detail pre::-webkit-scrollbar-button { display: none; width: 0; height: 0; }
 html.dark .tool-detail pre::-webkit-scrollbar-thumb { background: rgba(220,215,205,.28); }
+.turn-actions { opacity: 0; }
+.turn:hover .turn-actions, .turn-actions:focus-within { opacity: 1; }
+.turn-time { display: block; margin-top: 5px; color: #aaa49a; font-size: 9.5px; text-align: right; }
+.thinking-size { opacity: 0; transition: opacity .15s ease; }
+.thinking:hover .thinking-size { opacity: 1; }
+.thinking-elapsed { margin-left: auto; color: #a19c92; font-size: 10px; font-variant-numeric: tabular-nums; }
+.work-log { margin: 4px 0 12px; color: var(--muted); }
+.work-log > summary { display: flex; align-items: center; gap: 7px; list-style: none; cursor: pointer; color: #8f8a80; font-size: 11.5px; }
+.work-log > summary::-webkit-details-marker { display: none; }
+.work-log > summary .chev { transition: transform .18s var(--ease); }
+.work-log[open] > summary .chev { transform: rotate(90deg); }
+.work-duration { color: #b0aba1; font-size: 10px; }
+.work-body { margin: 8px 0 0 19px; padding-left: 12px; border-left: 1px solid var(--line); }
+.work-sources { margin-top: 12px; }
+.work-sources-title { margin-bottom: 5px; color: #a19c92; font-size: 10px; letter-spacing: .06em; }
+.work-log .source-list { margin: 0; padding: 0; list-style: none; }
+.work-log .source-list li { display: flex; gap: 7px; margin: 5px 0; font-size: 11px; }
+.work-log .source-index { color: var(--accent); font-size: 9px; }
+.work-log .source-body { min-width: 0; display: flex; flex-direction: column; }
+.work-log .source-body a { color: var(--ink); text-decoration: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.work-log .source-body a:hover { color: var(--accent); }
+.work-log .source-host { color: #a19c92; font-size: 9.5px; }
+.segment-timeline { display: flex; flex-direction: column; gap: 6px; }

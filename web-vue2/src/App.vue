@@ -724,9 +724,9 @@ export default {
       const segments = (assistant.segments || []).slice();
       const last = segments[segments.length - 1];
       if (last && last.type === 'reasoning') {
-        segments[segments.length - 1] = { ...last, text: (last.text || '') + text };
+        segments[segments.length - 1] = { ...last, text: (last.text || '') + text, startedAt: last.startedAt || Date.now() };
       } else {
-        segments.push({ type: 'reasoning', text, status: 'done' });
+        segments.push({ type: 'reasoning', text, status: 'done', startedAt: Date.now() });
       }
       this.$set(assistant, 'segments', segments);
       assistant.reasoning = (assistant.reasoning || '') + text;
@@ -752,8 +752,10 @@ export default {
         if (!callId && segment.name === name && segment.status === 'running') { index = i; break; }
       }
       if (index < 0) {
+        const prior = segments[segments.length - 1];
+        if (prior && prior.type === 'reasoning' && !prior.endedAt) prior.endedAt = Date.now();
         const segment = {
-          type: 'tool', name, callId, label, status,
+          type: 'tool', name, callId, label, status, startedAt: Date.now(),
           query: event.query || '', url: event.url || '', summary: event.summary || '', detail: '',
         };
         if (event.detail) segment.detail = String(event.detail).slice(0, 4000);
@@ -765,6 +767,7 @@ export default {
           callId: callId || previous.callId || '',
           label,
           status,
+          endedAt: (status === 'done' || status === 'failed') ? Date.now() : previous.endedAt,
           query: event.query || previous.query || '',
           url: event.url || previous.url || '',
           summary: event.summary || previous.summary || '',
@@ -875,7 +878,14 @@ export default {
             if (event.status === 'completed') { this.finalizeTools(assistant, false); return; }
             continue;
           }
-          if (event.type === 'delta') { assistant.content += event.text || ''; stream.phase = 'streaming'; }
+          if (event.type === 'delta') {
+            if (!assistant.content) {
+              const last = (assistant.segments || []).slice().reverse().find((s) => s.type === 'reasoning' && !s.endedAt);
+              if (last) { last.endedAt = Date.now(); this.$set(assistant, 'segments', (assistant.segments || []).slice()); }
+            }
+            assistant.content += event.text || '';
+            stream.phase = 'streaming';
+          }
           if (event.type === 'reasoning') { this.appendReasoning(assistant, event.text || ''); stream.phase = 'streaming'; }
           if (event.type === 'tool') { this.upsertTool(assistant, event); this.mergeSources(assistant, event.sources); }
           if (event.type === 'sources') { this.mergeSources(assistant, event.sources); }
