@@ -132,7 +132,7 @@ class OpenAiAdapter extends LlmAdapter {
   }
 }
 
-export async function createEmbeddedRuntime({ baseUrl, apiKey, model, systemPrompt, workspace }) {
+export async function createEmbeddedRuntime({ baseUrl, apiKey, model, systemPrompt, workspace, tools = [] }) {
   const ctx = new Context();
   await ctx.plugin(LlmRuntime);
   await ctx.plugin(SessionStore);
@@ -142,6 +142,7 @@ export async function createEmbeddedRuntime({ baseUrl, apiKey, model, systemProm
   await ctx.plugin(AgentRegistry);
   await ctx.plugin(AgentLoop, { agents: [] });
   ctx.llm.registerAdapter(['openai'], new OpenAiAdapter({ baseUrl, apiKey }));
+  for (const tool of tools) ctx.tools.register(tool);
   return {
     async createSession(sessionId) {
       const handle = await ctx.agents.create({

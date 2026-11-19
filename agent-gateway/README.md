@@ -20,6 +20,10 @@ for accounts, cloud conversation sync, levels and tickets.
 - `src/embedded-runtime.mjs` creates a Cordis context and registers the seven core
   services plus an OpenAI-compatible adapter; `src/embedded-server.mjs` exposes
   frame/event SSE without spawning Electron or the dsh CLI.
+- `src/web-tools.mjs` registers `web_search` (Bing HTML, no key) and `web_fetch`
+  (public HTTP/HTTPS, private-address rejection) on the embedded Agent.
+- File and shell tools are intentionally not registered yet: there is no trusted
+  sandbox/approval layer in this POC.
 - Model authentication is supplied per request.
 - The current POC does not yet include the Go proxy or the Vue2 SFC frontend.
 
@@ -50,7 +54,9 @@ curl -N -X POST http://127.0.0.1:18092/v1/run \
 ```
 
 The response is SSE: `session`, `frame` (DSH AssistantStreamFrame), `event`
-(DSH SessionEvent), `done`/`error`.
+(DSH SessionEvent), `done`/`error`. Web tools are registered on the embedded
+Agent; a model that emits `web_search` / `web_fetch` tool calls will execute
+them in this process.
 
 ## Run the CLI sidecar POC
 
