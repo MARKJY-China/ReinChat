@@ -277,6 +277,13 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request) {
 		s.handleProviderItem(w, r, id)
 		return
 	}
+	if rest, ok := strings.CutPrefix(path, "/api/v1/conversations/"); ok && strings.HasSuffix(rest, "/title") {
+		id := strings.TrimSuffix(rest, "/title")
+		if id != "" && !strings.Contains(id, "/") {
+			s.handleConversationTitle(w, r, id)
+			return
+		}
+	}
 	if id, ok := pathValue(path, "/api/v1/conversations/"); ok {
 		s.handleConversationItem(w, r, id)
 		return

@@ -292,6 +292,7 @@ export default {
         if (this.level >= 2 && this.agentAvailable) await this.streamDsh(conversation, assistant, text, stream);
         else await this.streamRelay(conversation, assistant, stream);
         await this.persist(conversation);
+        this.maybeGenerateTitle(conversation).catch(() => {});
       } catch (e) {
         if (e.name === 'AbortError' || stream.cancelled) {
           assistant.status = 'CANCELLED';
@@ -317,6 +318,24 @@ export default {
       const assistant = conversation && conversation.messages.find((m) => m.id === stream.assistantId);
       if (assistant) { assistant.streaming = false; assistant.status = 'CANCELLED'; }
       this.$delete(this.streams, id);
+    },
+    async maybeGenerateTitle(conversation) {
+      if (!conversation || (conversation.title && conversation.title !== '新会话')) return;
+      const users = (conversation.messages || []).filter((m) => m.role === 'user');
+      if (users.length !== 1 || !users[0].content) return;
+      const settings = conversation.settings || {};
+      const fallback = users[0].content.replace(/\s+/g, ' ').trim().slice(0, 20);
+      try {
+        const data = await this.api.request('/v1/conversations/' + encodeURIComponent(conversation.id) + '/title', {
+          method: 'POST',
+          body: { providerId: settings.providerId || this.providerId, model: settings.model || this.model, text: users[0].content },
+        });
+        if (data && data.title) conversation.title = data.title;
+      } catch (e) {
+        conversation.title = fallback || '新会话';
+      }
+      if (this.activeId === conversation.id) this.active.title = conversation.title;
+      await this.persist(conversation);
     },
     async responseError(res, label) {
       const raw = await res.text();
