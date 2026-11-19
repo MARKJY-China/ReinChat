@@ -8,15 +8,22 @@
       <img v-for="(img, index) in message.images" :key="index" :src="img.url || ('/api/v1/files/' + img.id)" alt="附件图片" @click="previewIndex = index">
     </div>
 
-    <div class="process" v-if="showLiveProcess">
+    <div class="live-timeline" v-if="timeline.length">
+      <template v-for="(item, index) in timeline" :key="index">
+        <div v-if="item.type === 'text'" class="prose" v-html="renderText(item.text)"></div>
+        <SegmentTimeline v-else :segments="[item]" :now="now" :streaming="message.streaming" />
+      </template>
+    </div>
+
+    <div class="process" v-if="!timeline.length && showLiveProcess">
       <SegmentTimeline :segments="segments" :now="now" :streaming="message.streaming" />
     </div>
 
-    <div class="process" v-else-if="segments.length && !message.streaming && !hasTools">
+    <div class="process" v-else-if="!timeline.length && segments.length && !message.streaming && !hasTools">
       <SegmentTimeline :segments="segments" :now="now" :streaming="false" />
     </div>
 
-    <details class="work-log" v-else-if="hasFinishedWork && hasTools && !message.streaming">
+    <details class="work-log" v-else-if="!timeline.length && hasFinishedWork && hasTools && !message.streaming">
       <summary>
         <svg class="chev" viewBox="0 0 12 12" aria-hidden="true"><path d="M4 2.2 7.8 6 4 9.8"/></svg>
         <span>已完成工作</span>
@@ -44,7 +51,7 @@
       <pre>{{ message.reasoning }}</pre>
     </details>
 
-    <div class="prose" v-html="html"></div>
+    <div class="prose" v-if="!timeline.length" v-html="html"></div>
     <div class="stream-line" v-if="message.streaming"><span></span>{{ streamPhase === 'streaming' ? 'AI 正在输出' : '请求服务端中' }}<button class="stream-stop" @click="$emit('stop')">停止</button></div>
     <div class="turn-error" v-if="message.error">
       <strong>生成失败</strong>
@@ -74,6 +81,7 @@ export default {
   computed: {
     html() { return renderMarkdown(this.message.content, this.sources); },
     segments() { return (this.message.segments || []).slice(); },
+    timeline() { return (this.message.timeline || []).slice(); },
     sources() {
       const raw = Array.isArray(this.message.sources) ? this.message.sources : [];
       const seen = new Set();
@@ -114,6 +122,7 @@ export default {
     'message.content'() { if (!this.message.streaming) this.stopClock(); },
   },
   methods: {
+    renderText(text) { return renderMarkdown(text || '', this.sources); },
     startClock() {
       if (this.timer) return;
       this.timer = setInterval(() => { this.now = Date.now(); }, 100);

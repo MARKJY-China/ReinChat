@@ -663,7 +663,7 @@ export default {
       this.$set(this.conversationCache, conversation.id, conversation);
       const now = Date.now();
       if (!retry) conversation.messages.push({ id: uuid(), role: 'user', content: text, pdfName: pdf ? pdf.name : '', pdfText: pdf ? pdf.text : '', images: images || [], createdAt: now, status: 'COMPLETE', error: null });
-      const assistant = { id: uuid(), role: 'assistant', content: '', reasoning: '', segments: [], sources: [], model: this.model, toolCalls: [], images: [], createdAt: now + 1, status: 'COMPLETE', error: null, streaming: true };
+      const assistant = { id: uuid(), role: 'assistant', content: '', reasoning: '', segments: [], timeline: [], sources: [], model: this.model, toolCalls: [], images: [], createdAt: now + 1, status: 'COMPLETE', error: null, streaming: true };
       conversation.messages.push(assistant);
       this.followBottom = true;
       this.scrollThreadToBottom();
@@ -729,6 +729,11 @@ export default {
         segments.push({ type: 'reasoning', text, status: 'done', startedAt: Date.now() });
       }
       this.$set(assistant, 'segments', segments);
+      const timeline = (assistant.timeline || []).slice();
+      const lastTimeline = timeline[timeline.length - 1];
+      if (lastTimeline && lastTimeline.type === 'reasoning') lastTimeline.text = (lastTimeline.text || '') + text;
+      else timeline.push({ type: 'reasoning', text, startedAt: Date.now() });
+      this.$set(assistant, 'timeline', timeline);
       assistant.reasoning = (assistant.reasoning || '') + text;
       if (this.followBottom) this.scrollThreadToBottom();
     },
@@ -776,6 +781,11 @@ export default {
         segments[index] = segment;
       }
       this.$set(assistant, 'segments', segments);
+      const timeline = (assistant.timeline || []).slice();
+      const existingTimeline = callId ? timeline.find((item) => item.type === 'tool' && item.callId === callId) : null;
+      if (existingTimeline) Object.assign(existingTimeline, { label, status, summary: event.summary || existingTimeline.summary || '', detail: (event.detail ? String(event.detail).slice(0, 4000) : existingTimeline.detail) || '' });
+      else timeline.push(segments[segments.length - 1]);
+      this.$set(assistant, 'timeline', timeline);
       if (this.followBottom) this.scrollThreadToBottom();
     },
     finalizeTools(assistant, failed) {
@@ -883,7 +893,13 @@ export default {
               const last = (assistant.segments || []).slice().reverse().find((s) => s.type === 'reasoning' && !s.endedAt);
               if (last) { last.endedAt = Date.now(); this.$set(assistant, 'segments', (assistant.segments || []).slice()); }
             }
-            assistant.content += event.text || '';
+            const delta = event.text || '';
+            assistant.content += delta;
+            const timeline = (assistant.timeline || []).slice();
+            const lastTimeline = timeline[timeline.length - 1];
+            if (lastTimeline && lastTimeline.type === 'text') lastTimeline.text = (lastTimeline.text || '') + delta;
+            else timeline.push({ type: 'text', text: delta });
+            this.$set(assistant, 'timeline', timeline);
             stream.phase = 'streaming';
           }
           if (event.type === 'reasoning') { this.appendReasoning(assistant, event.text || ''); stream.phase = 'streaming'; }

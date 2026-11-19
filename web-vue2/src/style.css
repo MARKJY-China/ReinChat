@@ -464,3 +464,6 @@ html.dark .tool-detail pre::-webkit-scrollbar-thumb { background: rgba(220,215,2
 .work-log .source-body a:hover { color: var(--accent); }
 .work-log .source-host { color: #a19c92; font-size: 9.5px; }
 .segment-timeline { display: flex; flex-direction: column; gap: 6px; }
+.live-timeline { display: flex; flex-direction: column; gap: 9px; margin: 2px 0 4px; }
+.live-timeline .prose { margin: 0; }
+.live-timeline .thinking, .live-timeline .tool-card { margin: 0; }
