@@ -105,12 +105,14 @@ export default {
       authError: '', busy: false,
       conversations: [], active: null, activeId: '',
       providers: [], providerRecords: [], providerId: '', model: '', reasoningEffort: 'high', search: true,
-      draft: '', sending: false, level: 1, agentAvailable: false,
+      draft: '', level: 1, agentAvailable: false,
+      conversationCache: {}, streams: {}, applyingSettings: false, settingsTimer: null,
       providerModal: false, providerDraft: null, providerBusy: false, providerError: '',
     };
   },
   computed: {
     api() { return new Api(this.server, this.token); },
+    sending() { return !!(this.activeId && this.streams[this.activeId]); },
     providerOptions() { return this.providers.map((p) => ({ value: p.id, label: p.name })); },
     modelOptions() {
       const provider = this.providers.find((p) => p.id === this.providerId);
@@ -125,7 +127,11 @@ export default {
       const provider = this.providers.find((p) => p.id === this.providerId);
       const first = ((provider && provider.model) || '').split(',')[0].trim();
       if (first && !this.modelOptions.some((m) => m.value === this.model)) this.model = first;
+      if (!this.applyingSettings) this.scheduleSettings();
     },
+    model() { if (!this.applyingSettings) this.scheduleSettings(); },
+    reasoningEffort() { if (!this.applyingSettings) this.scheduleSettings(); },
+    search() { if (!this.applyingSettings) this.scheduleSettings(); },
   },
   mounted() { if (this.token) this.refresh(); },
   methods: {
@@ -161,6 +167,22 @@ export default {
       const provider = this.providers.find((p) => p.id === id);
       const first = ((provider && provider.model) || '').split(',')[0].trim();
       this.model = first;
+    },
+    applySettings(conversation) {
+      const settings = conversation && conversation.settings;
+      if (!settings) return;
+      this.applyingSettings = true;
+      if (settings.providerId) this.providerId = settings.providerId;
+      if (settings.model) this.model = settings.model;
+      if (settings.reasoningEffort) this.reasoningEffort = settings.reasoningEffort;
+      this.search = settings.search !== false;
+      this.$nextTick(() => { this.applyingSettings = false; });
+    },
+    scheduleSettings() {
+      if (!this.active || !this.active.version || this.sending) return;
+      this.active.settings = { providerId: this.providerId, model: this.model, reasoningEffort: this.reasoningEffort, search: this.search };
+      if (this.settingsTimer) clearTimeout(this.settingsTimer);
+      this.settingsTimer = setTimeout(() => { this.settingsTimer = null; this.persist(this.active); }, 350);
     },
     openProviderManager() { this.providerModal = true; this.providerDraft = null; this.providerError = ''; this.refresh(); },
     newProvider() {
@@ -204,21 +226,24 @@ export default {
     async sendText(text, retry) {
       if (!this.active) this.newConversation();
       const conversation = this.active;
+      conversation.settings = { providerId: this.providerId, model: this.model, reasoningEffort: this.reasoningEffort, search: this.search };
+      this.$set(this.conversationCache, conversation.id, conversation);
       const now = Date.now();
       if (!retry) conversation.messages.push({ id: uuid(), role: 'user', content: text, images: [], createdAt: now, status: 'COMPLETE', error: null });
       const assistant = { id: uuid(), role: 'assistant', content: '', reasoning: '', model: this.model, toolCalls: [], images: [], createdAt: now + 1, status: 'COMPLETE', error: null, streaming: true };
       conversation.messages.push(assistant);
-      this.sending = true;
+      this.$set(this.streams, conversation.id, { assistantId: assistant.id });
       try {
         if (this.level >= 2 && this.agentAvailable) await this.streamDsh(conversation, assistant, text);
         else await this.streamRelay(conversation, assistant);
-        await this.persist();
+        await this.persist(conversation);
       } catch (e) { assistant.error = e.message; assistant.status = 'ERROR'; }
-      finally { assistant.streaming = false; this.sending = false; }
+      finally { assistant.streaming = false; this.$delete(this.streams, conversation.id); }
     },
     async streamRelay(conversation, assistant) {
+      const settings = conversation.settings || {};
       const history = conversation.messages.filter((m) => m !== assistant && m.content).map((m) => ({ id: m.id, role: m.role, content: m.content, images: [], createdAt: m.createdAt, status: 'COMPLETE', error: null }));
-      const job = await this.api.request('/v1/relay/jobs', { method: 'POST', body: { providerId: this.providerId, conversationId: conversation.id, model: this.model, reasoningEffort: this.reasoningEffort, search: this.search, messages: history } });
+      const job = await this.api.request('/v1/relay/jobs', { method: 'POST', body: { providerId: settings.providerId || this.providerId, conversationId: conversation.id, model: settings.model || this.model, reasoningEffort: settings.reasoningEffort || this.reasoningEffort, search: settings.search !== false, messages: history } });
       const res = await fetch(this.api.base() + '/v1/relay/jobs/' + encodeURIComponent(job.id) + '/events', { headers: { Authorization: 'Bearer ' + this.token } });
       if (!res.ok) throw new Error('relay HTTP ' + res.status);
       const reader = res.body.getReader(); const decoder = new TextDecoder(); let buffer = '';
@@ -239,7 +264,8 @@ export default {
       }
     },
     async streamDsh(conversation, assistant, text) {
-      const res = await fetch(this.api.base() + '/v1/agent/run', { method: 'POST', headers: { Authorization: 'Bearer ' + this.token, 'Content-Type': 'application/json' }, body: JSON.stringify({ providerId: this.providerId, model: this.model, reasoningEffort: this.reasoningEffort, conversationId: conversation.id, text }) });
+      const settings = conversation.settings || {};
+      const res = await fetch(this.api.base() + '/v1/agent/run', { method: 'POST', headers: { Authorization: 'Bearer ' + this.token, 'Content-Type': 'application/json' }, body: JSON.stringify({ providerId: settings.providerId || this.providerId, model: settings.model || this.model, reasoningEffort: settings.reasoningEffort || this.reasoningEffort, conversationId: conversation.id, text }) });
       if (!res.ok) throw new Error('DSH HTTP ' + res.status);
       const reader = res.body.getReader(); const decoder = new TextDecoder(); let buffer = '';
       while (true) {
@@ -262,13 +288,17 @@ export default {
         }
       }
     },
-    async persist() {
-      if (!this.active) return;
-      const c = this.active;
-      const body = { title: c.title || '新会话', createdAt: c.createdAt, updatedAt: Date.now(), messages: c.messages.map((m) => ({ id: m.id, role: m.role, content: m.content || '', reasoning: m.reasoning || '', model: m.model || '', images: m.images || [], createdAt: m.createdAt, status: m.status || 'COMPLETE', error: m.error || null })), settings: { providerId: this.providerId, model: this.model, reasoningEffort: this.reasoningEffort, search: this.search } };
+    async persist(target) {
+      const c = target || this.active;
+      if (!c) return;
+      const settings = c.settings || { providerId: this.providerId, model: this.model, reasoningEffort: this.reasoningEffort, search: this.search };
+      const body = { title: c.title || '新会话', createdAt: c.createdAt, updatedAt: Date.now(), messages: c.messages.map((m) => ({ id: m.id, role: m.role, content: m.content || '', reasoning: m.reasoning || '', model: m.model || '', images: m.images || [], createdAt: m.createdAt, status: m.status || 'COMPLETE', error: m.error || null })), settings };
       try {
-        if (!c.version) { const saved = await this.api.createConversation({ id: c.id, ...body }); this.active = saved; this.activeId = saved.id; }
-        else { const saved = await this.api.updateConversation(c.id, { ...body, baseVersion: c.version }); this.active = saved; }
+        const saved = !c.version
+          ? await this.api.createConversation({ id: c.id, ...body })
+          : await this.api.updateConversation(c.id, { ...body, baseVersion: c.version });
+        this.$set(this.conversationCache, saved.id, saved);
+        if (this.activeId === saved.id) this.active = saved;
         await this.refresh();
       } catch (e) { this.authError = e.message; }
     },
