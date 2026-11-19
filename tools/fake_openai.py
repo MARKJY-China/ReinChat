@@ -25,6 +25,8 @@ class Handler(BaseHTTPRequestHandler):
             chunk = {"choices": [{"delta": {"content": text}}]}
             self.wfile.write(("data: " + json.dumps(chunk, ensure_ascii=False) + "\n\n").encode())
             self.wfile.flush()
+        finish = {"choices": [{"delta": {}, "finish_reason": "stop"}]}
+        self.wfile.write(("data: " + json.dumps(finish, ensure_ascii=False) + "\n\n").encode())
         self.wfile.write(b"data: [DONE]\n\n")
         self.wfile.flush()
 
