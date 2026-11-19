@@ -31,6 +31,7 @@ type AccountResponse struct {
 	PendingRequest    *UpgradeRequestDTO  `json:"pendingRequest,omitempty"`
 	LatestRequests    []UpgradeRequestDTO `json:"latestRequests"`
 	CanRequestUpgrade bool                `json:"canRequestUpgrade"`
+	AgentAvailable    bool                `json:"agentAvailable"`
 }
 
 type UpgradeRequestCreate struct {
@@ -84,6 +85,7 @@ func (s *Server) handleAccount(w http.ResponseWriter, r *http.Request) {
 		PendingRequest:    pending,
 		LatestRequests:    requests,
 		CanRequestUpgrade: user.Level < 2 && pending == nil,
+		AgentAvailable:    strings.TrimSpace(s.cfg.DSHGatewayURL) != "",
 	})
 }
 

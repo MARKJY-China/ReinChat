@@ -39,6 +39,7 @@
         atBottom: true,
         follow: true,
         level: 1,
+        agentAvailable: false,
         pendingRequest: null,
         upgradeReason: '',
         upgradeError: '',
@@ -196,6 +197,7 @@
         this.activeId = '';
         this.syncState = 'idle';
         this.level = 1;
+        this.agentAvailable = false;
         this.pendingRequest = null;
         this.providers = [];
         this.providerId = '';
@@ -236,6 +238,7 @@
           const data = await this.api('/v1/account');
           if (data && data.user) this.level = data.user.level;
           this.pendingRequest = data && data.pendingRequest || null;
+          this.agentAvailable = !!(data && data.agentAvailable);
         } catch (e) { /* downgrade UI is non-critical */ }
       },
       submitUpgrade: async function () {
@@ -483,26 +486,30 @@
         this.follow = true;
         this.$nextTick(this.scrollToBottom);
         try {
-          const history = conversation.messages
-            .filter(function (m) { return m !== assistant && (m.content || '').trim(); })
-            .map(function (m) {
-              return {
-                id: m.id, role: m.role, content: m.content, images: [],
-                createdAt: m.createdAt, status: 'COMPLETE', error: null,
-              };
+          if (this.level >= 2 && this.agentAvailable) {
+            await this.streamDsh(conversation, assistant, text);
+          } else {
+            const history = conversation.messages
+              .filter(function (m) { return m !== assistant && (m.content || '').trim(); })
+              .map(function (m) {
+                return {
+                  id: m.id, role: m.role, content: m.content, images: [],
+                  createdAt: m.createdAt, status: 'COMPLETE', error: null,
+                };
+              });
+            const job = await this.api('/v1/relay/jobs', {
+              method: 'POST',
+              body: {
+                providerId: this.providerId,
+                conversationId: conversation.id,
+                model: this.model,
+                reasoningEffort: this.reasoningEffort,
+                search: this.search,
+                messages: history,
+              },
             });
-          const job = await this.api('/v1/relay/jobs', {
-            method: 'POST',
-            body: {
-              providerId: this.providerId,
-              conversationId: conversation.id,
-              model: this.model,
-              reasoningEffort: this.reasoningEffort,
-              search: this.search,
-              messages: history,
-            },
-          });
-          await this.streamRelay(job.id, assistant, conversation.id);
+            await this.streamRelay(job.id, assistant, conversation.id);
+          }
           await this.persistConversation(conversation.id);
         } catch (e) {
           assistant.error = e.message || '生成失败';
@@ -536,6 +543,7 @@
           if (conversation.messages[i].role === 'user') { userIndex = i; break; }
         }
         if (userIndex < 0) return;
+        const text = conversation.messages[userIndex].content;
         conversation.messages = conversation.messages.slice(0, userIndex + 1);
         const assistant = {
           id: this.uuid(), role: 'assistant', content: '', reasoning: '', model: this.model,
@@ -549,27 +557,31 @@
         });
         this.follow = true;
         this.$nextTick(this.scrollToBottom);
-        const history = conversation.messages
-          .filter(function (m) { return m !== assistant && (m.content || '').trim(); })
-          .map(function (m) {
-            return {
-              id: m.id, role: m.role, content: m.content, images: [],
-              createdAt: m.createdAt, status: 'COMPLETE', error: null,
-            };
-          });
         try {
-          const job = await this.api('/v1/relay/jobs', {
-            method: 'POST',
-            body: {
-              providerId: this.providerId,
-              conversationId: conversation.id,
-              model: this.model,
-              reasoningEffort: this.reasoningEffort,
-              search: this.search,
-              messages: history,
-            },
-          });
-          await this.streamRelay(job.id, assistant, conversation.id);
+          if (this.level >= 2 && this.agentAvailable) {
+            await this.streamDsh(conversation, assistant, text);
+          } else {
+            const history = conversation.messages
+              .filter(function (m) { return m !== assistant && (m.content || '').trim(); })
+              .map(function (m) {
+                return {
+                  id: m.id, role: m.role, content: m.content, images: [],
+                  createdAt: m.createdAt, status: 'COMPLETE', error: null,
+                };
+              });
+            const job = await this.api('/v1/relay/jobs', {
+              method: 'POST',
+              body: {
+                providerId: this.providerId,
+                conversationId: conversation.id,
+                model: this.model,
+                reasoningEffort: this.reasoningEffort,
+                search: this.search,
+                messages: history,
+              },
+            });
+            await this.streamRelay(job.id, assistant, conversation.id);
+          }
           await this.persistConversation(conversation.id);
         } catch (e) {
           assistant.error = e.message || '生成失败';
@@ -593,6 +605,87 @@
       finishStream: function (conversationId, assistant) {
         if (assistant) assistant.streaming = false;
         this.$delete(this.streams, conversationId);
+      },
+      streamDsh: function (conversation, assistant, text) {
+        return new Promise(async (resolve, reject) => {
+          let completed = false;
+          try {
+            const res = await fetch(this.apiBase() + '/v1/agent/run', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                Authorization: 'Bearer ' + this.token,
+                Accept: 'text/event-stream',
+              },
+              body: JSON.stringify({
+                providerId: this.providerId,
+                model: this.model,
+                reasoningEffort: this.reasoningEffort,
+                conversationId: conversation.id,
+                text: text || '',
+              }),
+            });
+            if (!res.ok || !res.body) {
+              const raw = await res.text();
+              let message = 'DSH gateway HTTP ' + res.status;
+              try { message = JSON.parse(raw).error.message || message; } catch (e) { /* ignore */ }
+              throw new Error(message);
+            }
+            const reader = res.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = '';
+            while (true) {
+              const part = await reader.read();
+              if (part.done) break;
+              buffer += decoder.decode(part.value, { stream: true });
+              let cut;
+              while ((cut = buffer.indexOf('\n\n')) >= 0) {
+                const block = buffer.slice(0, cut);
+                buffer = buffer.slice(cut + 2);
+                const lines = block.split('\n');
+                const eventName = (lines.find(function (line) { return line.indexOf('event:') === 0; }) || '').slice(6).trim();
+                const dataLines = lines
+                  .filter(function (line) { return line.indexOf('data:') === 0; })
+                  .map(function (line) { return line.slice(5).trim(); });
+                if (!dataLines.length) continue;
+                let payload;
+                try { payload = JSON.parse(dataLines.join('\n')); } catch (e) { continue; }
+                if (eventName === 'frame') {
+                  if (payload.type === 'chunk' && payload.chunk) {
+                    if (payload.chunk.type === 'text-delta') {
+                      assistant.content = (assistant.content || '') + payload.chunk.text;
+                    } else if (payload.chunk.type === 'reasoning-delta') {
+                      assistant.reasoning = (assistant.reasoning || '') + payload.chunk.text;
+                    } else if (payload.chunk.type === 'tool-call-delta') {
+                      assistant.toolActivity = true;
+                    }
+                  }
+                  if (this.activeId === conversation.id && this.follow) this.$nextTick(this.scrollToBottom);
+                } else if (eventName === 'event') {
+                  if (payload.type === 'tool/call' || payload.type === 'tool/result') {
+                    assistant.toolActivity = true;
+                  }
+                  if (payload.type === 'turn/end') {
+                    const reason = payload.data && payload.data.reason;
+                    if (reason && reason.kind && reason.kind !== 'completed' &&
+                        reason.kind !== 'max-tokens') {
+                      throw new Error((reason.error && reason.error.message) || ('DSH turn: ' + reason.kind));
+                    }
+                  }
+                } else if (eventName === 'done') {
+                  completed = true;
+                  resolve();
+                  return;
+                } else if (eventName === 'error') {
+                  throw new Error(payload.message || 'DSH agent failed');
+                }
+              }
+            }
+            if (!completed) reject(new Error('DSH stream ended'));
+          } catch (e) {
+            reject(e);
+          }
+        });
       },
       streamRelay: function (jobId, assistant, conversationId) {
         return new Promise(async (resolve, reject) => {
