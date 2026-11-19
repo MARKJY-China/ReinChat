@@ -641,7 +641,7 @@ export default {
       const history = conversation.messages.filter((m) => m !== assistant && m.content).map((m) => ({
         id: m.id, role: m.role,
         content: m.pdfText ? `${m.content}\n\n[附件 PDF：${m.pdfName}]\n${m.pdfText}` : m.content,
-        images: m.images || [], createdAt: m.createdAt, status: 'COMPLETE', error: null,
+        images: (m.images || []).map((img) => ({ id: img.id, remoteId: img.remoteId, mimeType: img.mimeType, width: img.width, height: img.height })), createdAt: m.createdAt, status: 'COMPLETE', error: null,
       }));
       const job = await this.api.request('/v1/relay/jobs', { method: 'POST', body: { providerId: settings.providerId || this.providerId, conversationId: conversation.id, model: settings.model || this.model, reasoningEffort: settings.reasoningEffort || this.reasoningEffort, search: settings.search !== false, messages: history } });
       stream.jobId = job.id;
