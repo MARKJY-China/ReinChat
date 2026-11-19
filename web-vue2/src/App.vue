@@ -86,8 +86,10 @@
       <ComposerBar
         :provider-id="providerId" :model="model" :reasoning-effort="reasoningEffort" :search="search" :draft="draft" :sending="sending" :level="level"
         :provider-options="providerOptions" :model-options="modelOptions" :reasoning-options="reasoningOptions"
+        :pdf-name="pdfAttachment ? pdfAttachment.name : ''" :pdf-busy="pdfBusy"
         @update:providerId="setProvider" @update:model="model = $event" @update:reasoningEffort="reasoningEffort = $event"
-        @update:search="search = $event" @update:draft="draft = $event" @send="send" @stop="stopGeneration" />
+        @update:search="search = $event" @update:draft="draft = $event" @send="send" @stop="stopGeneration"
+        @attach-pdf="attachPdf" @remove-pdf="pdfAttachment = null" />
     </main>
 
     <div v-if="settingsOpen" class="modal-mask" @click.self="settingsOpen = false">
@@ -163,6 +165,7 @@ import MessageItem from './components/MessageItem.vue';
 import ComposerBar from './components/ComposerBar.vue';
 import { Api } from './lib/api';
 import { uuid } from './lib/markdown';
+import { extractPdfText } from './lib/pdf';
 
 const TOKEN = 'reinchat_vue2_token';
 const USER = 'reinchat_vue2_user';
@@ -187,6 +190,7 @@ export default {
       providerModal: false, providerDraft: null, providerBusy: false, providerError: '',
       providerModelsLoading: false, settingsOpen: false,
       fontScale: Number(localStorage.getItem('reinchat_font_scale') || 1),
+      pdfAttachment: null, pdfBusy: false,
       convMenu: null, pinnedIds: JSON.parse(localStorage.getItem('reinchat_pins') || '[]'),
       selectionMode: false, selectedIds: [], renamingId: '', renameDraft: '',
     };
@@ -497,26 +501,45 @@ export default {
       if (index < 0) return;
       let userIndex = -1; for (let i = index - 1; i >= 0; i--) if (this.active.messages[i].role === 'user') { userIndex = i; break; }
       if (userIndex < 0) return;
-      const text = this.active.messages[userIndex].content;
+      const previous = this.active.messages[userIndex];
+      const text = previous.content;
+      const pdf = previous.pdfText ? { name: previous.pdfName, text: previous.pdfText } : null;
       this.active.messages = this.active.messages.slice(0, userIndex + 1);
-      await this.sendText(text, true);
+      await this.sendText(text, true, pdf);
     },
-    send() { const text = this.draft.trim(); if (!text || this.sending || !this.providerId) return; this.draft = ''; this.sendText(text, false); },
-    async sendText(text, retry) {
+    send() {
+      const text = this.draft.trim();
+      if ((!text && !this.pdfAttachment) || this.sending || !this.providerId) return;
+      const pdf = this.pdfAttachment;
+      this.draft = ''; this.pdfAttachment = null;
+      this.sendText(text || '请阅读并分析这份 PDF。', false, pdf);
+    },
+    async attachPdf(file) {
+      if (!file || this.pdfBusy) return;
+      if (file.type !== 'application/pdf' && !/\.pdf$/i.test(file.name)) { this.authError = '请选择 PDF 文件'; return; }
+      if (file.size > 40 * 1024 * 1024) { this.authError = 'PDF 不能超过 40MB'; return; }
+      this.pdfBusy = true; this.authError = '';
+      try {
+        const parsed = await extractPdfText(file);
+        this.pdfAttachment = parsed;
+        if (!parsed.text) this.authError = 'PDF 中没有可提取的文字（可能是扫描件）';
+      } catch (e) { this.authError = 'PDF 解析失败：' + e.message; } finally { this.pdfBusy = false; }
+    },
+    async sendText(text, retry, pdf) {
       if (!this.active) this.newConversation();
       const conversation = this.active;
       conversation.settings = { providerId: this.providerId, model: this.model, reasoningEffort: this.reasoningEffort, search: this.search };
       this.$set(this.conversationCache, conversation.id, conversation);
       const now = Date.now();
-      if (!retry) conversation.messages.push({ id: uuid(), role: 'user', content: text, images: [], createdAt: now, status: 'COMPLETE', error: null });
+      if (!retry) conversation.messages.push({ id: uuid(), role: 'user', content: text, pdfName: pdf ? pdf.name : '', pdfText: pdf ? pdf.text : '', images: [], createdAt: now, status: 'COMPLETE', error: null });
       const assistant = { id: uuid(), role: 'assistant', content: '', reasoning: '', segments: [], model: this.model, toolCalls: [], images: [], createdAt: now + 1, status: 'COMPLETE', error: null, streaming: true };
       conversation.messages.push(assistant);
       const controller = new AbortController();
       this.$set(this.streams, conversation.id, { assistantId: assistant.id, phase: 'waiting', controller, cancelled: false });
       const stream = this.streams[conversation.id];
       try {
-        if (this.level >= 2 && this.agentAvailable) await this.streamDsh(conversation, assistant, text, stream);
-        else await this.streamRelay(conversation, assistant, stream);
+        if (this.level >= 2 && this.agentAvailable) await this.streamDsh(conversation, assistant, text, stream, pdf);
+        else await this.streamRelay(conversation, assistant, stream, pdf);
         await this.persist(conversation);
         this.maybeGenerateTitle(conversation).catch(() => {});
       } catch (e) {
@@ -597,9 +620,13 @@ export default {
       error.detail = raw.slice(0, 4000);
       return error;
     },
-    async streamRelay(conversation, assistant, stream) {
+    async streamRelay(conversation, assistant, stream, pdf) {
       const settings = conversation.settings || {};
-      const history = conversation.messages.filter((m) => m !== assistant && m.content).map((m) => ({ id: m.id, role: m.role, content: m.content, images: [], createdAt: m.createdAt, status: 'COMPLETE', error: null }));
+      const history = conversation.messages.filter((m) => m !== assistant && m.content).map((m) => ({
+        id: m.id, role: m.role,
+        content: m.pdfText ? `${m.content}\n\n[附件 PDF：${m.pdfName}]\n${m.pdfText}` : m.content,
+        images: [], createdAt: m.createdAt, status: 'COMPLETE', error: null,
+      }));
       const job = await this.api.request('/v1/relay/jobs', { method: 'POST', body: { providerId: settings.providerId || this.providerId, conversationId: conversation.id, model: settings.model || this.model, reasoningEffort: settings.reasoningEffort || this.reasoningEffort, search: settings.search !== false, messages: history } });
       stream.jobId = job.id;
       const res = await fetch(this.api.base() + '/v1/relay/jobs/' + encodeURIComponent(job.id) + '/events', { headers: { Authorization: 'Bearer ' + this.token }, signal: stream.controller.signal });
@@ -634,9 +661,10 @@ export default {
       }
       if (!assistant.content) throw new Error('连接已中断，未收到模型输出');
     },
-    async streamDsh(conversation, assistant, text, stream) {
+    async streamDsh(conversation, assistant, text, stream, pdf) {
       const settings = conversation.settings || {};
-      const res = await fetch(this.api.base() + '/v1/agent/run', { method: 'POST', headers: { Authorization: 'Bearer ' + this.token, 'Content-Type': 'application/json' }, signal: stream.controller.signal, body: JSON.stringify({ providerId: settings.providerId || this.providerId, model: settings.model || this.model, reasoningEffort: settings.reasoningEffort || this.reasoningEffort, conversationId: conversation.id, text }) });
+      const promptText = pdf ? `${text}\n\n[附件 PDF：${pdf.name}]\n${pdf.text}` : text;
+      const res = await fetch(this.api.base() + '/v1/agent/run', { method: 'POST', headers: { Authorization: 'Bearer ' + this.token, 'Content-Type': 'application/json' }, signal: stream.controller.signal, body: JSON.stringify({ providerId: settings.providerId || this.providerId, model: settings.model || this.model, reasoningEffort: settings.reasoningEffort || this.reasoningEffort, conversationId: conversation.id, text: promptText }) });
       if (!res.ok) throw await this.responseError(res, 'DSH');
       const reader = res.body.getReader(); const decoder = new TextDecoder(); let buffer = '';
       while (true) {
@@ -669,7 +697,7 @@ export default {
       const c = target || this.active;
       if (!c) return;
       const settings = c.settings || { providerId: this.providerId, model: this.model, reasoningEffort: this.reasoningEffort, search: this.search };
-      const body = { title: c.title || '新会话', createdAt: c.createdAt, updatedAt: Date.now(), messages: c.messages.map((m) => ({ id: m.id, role: m.role, content: m.content || '', reasoning: m.reasoning || '', segments: m.segments || [], model: m.model || '', images: m.images || [], createdAt: m.createdAt, status: m.status || 'COMPLETE', error: m.error || null })), settings };
+      const body = { title: c.title || '新会话', createdAt: c.createdAt, updatedAt: Date.now(), messages: c.messages.map((m) => ({ id: m.id, role: m.role, content: m.content || '', reasoning: m.reasoning || '', segments: m.segments || [], pdfName: m.pdfName || '', pdfText: m.pdfText || '', model: m.model || '', images: m.images || [], createdAt: m.createdAt, status: m.status || 'COMPLETE', error: m.error || null })), settings };
       try {
         const saved = !c.version
           ? await this.api.createConversation({ id: c.id, ...body })

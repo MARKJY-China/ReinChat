@@ -57,6 +57,8 @@ type MessageDTO struct {
 	Role      string           `json:"role"`
 	Content   string           `json:"content"`
 	Reasoning string           `json:"reasoning,omitempty"`
+	PDFName   string           `json:"pdfName,omitempty"`
+	PDFText   string           `json:"pdfText,omitempty"`
 	Segments  []MessageSegment `json:"segments,omitempty"`
 	Model     string           `json:"model,omitempty"`
 	Images    []ImageDTO       `json:"images"`

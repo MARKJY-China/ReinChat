@@ -494,7 +494,11 @@ func buildRelayRequest(ctx context.Context, p *relayProvider, model, effort stri
 		if m.Role != "user" && m.Role != "assistant" && m.Role != "system" {
 			continue
 		}
-		list = append(list, map[string]any{"role": m.Role, "content": m.Content})
+		content := m.Content
+		if strings.TrimSpace(m.PDFText) != "" {
+			content += "\n\n[附件 PDF：" + m.PDFName + "]\n" + m.PDFText
+		}
+		list = append(list, map[string]any{"role": m.Role, "content": content})
 	}
 	chat["messages"] = list
 	if p.Temperature != nil {

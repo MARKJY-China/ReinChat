@@ -32,7 +32,11 @@ func (s *Server) runRelaySearchAgent(ctx context.Context, jobID string, p *relay
 	}
 	for _, message := range messages {
 		if message.Role == "user" || message.Role == "assistant" || message.Role == "system" {
-			base = append(base, map[string]any{"role": message.Role, "content": message.Content})
+			content := message.Content
+			if strings.TrimSpace(message.PDFText) != "" {
+				content += "\n\n[附件 PDF：" + message.PDFName + "]\n" + message.PDFText
+			}
+			base = append(base, map[string]any{"role": message.Role, "content": content})
 		}
 	}
 	tools := []map[string]any{
