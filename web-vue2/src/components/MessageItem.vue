@@ -17,7 +17,10 @@
     </div>
     <div class="prose" v-html="html"></div>
     <div class="stream-line" v-if="message.streaming"><span></span>正在生成</div>
-    <div class="turn-error" v-if="message.error">{{ message.error }}</div>
+    <div class="turn-error" v-if="message.error">
+      <strong>生成失败</strong>
+      <details><summary>查看详情</summary><pre>{{ message.error }}</pre></details>
+    </div>
     <div class="turn-actions" v-if="!message.streaming">
       <button v-if="message.role === 'user'" @click="$emit('edit', message)">编辑</button>
       <button v-if="message.role === 'assistant'" @click="$emit('retry', message)">重试</button>

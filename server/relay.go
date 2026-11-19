@@ -157,10 +157,6 @@ func (s *Server) handleRelayCreate(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if user.Level < 2 {
-		writeAPIError(w, http.StatusForbidden, "level_required", "服务端 AI 中转需要 LV2")
-		return
-	}
 	var req RelayCreateRequest
 	if e := decodeJSONBody(w, r, &req, maxConversationBytes); e != nil {
 		writeRequestError(w, e)

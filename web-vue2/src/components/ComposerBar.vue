@@ -9,12 +9,12 @@
           <UiDropdown :value="reasoningEffort" :options="reasoningOptions" placeholder="思考" :disabled="sending || level < 2" :open="openDropdown === 'reasoning'" @toggle="toggleDropdown('reasoning')" @input="$emit('update:reasoningEffort', $event)" @select="openDropdown = ''" />
           <button class="chip" :class="{ on: search }" :disabled="sending || level < 2" @click="$emit('update:search', !search)">联网</button>
         </div>
-        <button class="send-btn" :disabled="sending || !draft.trim() || level < 2 || !providerId" @click="$emit('send')" :title="sending ? '生成中' : '发送'">
+        <button class="send-btn" :disabled="sending || !draft.trim() || !providerId" @click="$emit('send')" :title="sending ? '生成中' : '发送'">
           <span v-if="!sending">↑</span><span v-else class="spinner"></span>
         </button>
       </div>
     </div>
-    <p class="composer-hint">{{ level < 2 ? 'LV2 可用服务端 Agent' : 'Enter 发送 · Shift + Enter 换行' }}</p>
+    <p class="composer-hint">{{ level < 2 ? '旧版 Chat 内核 · Enter 发送' : 'Enter 发送 · Shift + Enter 换行' }}</p>
   </footer>
 </template>
 

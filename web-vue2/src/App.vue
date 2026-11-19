@@ -35,6 +35,7 @@
         <div class="crumb"><span class="crumb-root">ReinChat</span><span class="crumb-sep">/</span><span>{{ active ? (active.title || '新会话') : '新会话' }}</span></div>
         <div class="top-actions">
           <span class="sync-dot" title="实时同步"></span>
+          <button class="icon-btn theme-toggle" :title="dark ? '切换浅色' : '切换暗色'" @click="toggleTheme">{{ dark ? '☀' : '☾' }}</button>
           <button class="quiet-btn small" @click="refresh">刷新</button>
         </div>
       </header>
@@ -129,6 +130,7 @@ export default {
       providers: [], providerRecords: [], providerId: '', model: '', reasoningEffort: 'high', search: true,
       draft: '', level: 1, agentAvailable: false, userMenu: false, railOpen: false,
       railCollapsed: localStorage.getItem('reinchat_rail_collapsed') === '1',
+      dark: localStorage.getItem('reinchat_theme') === 'dark' || (localStorage.getItem('reinchat_theme') !== 'light' && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches),
       conversationCache: {}, streams: {}, applyingSettings: false, settingsTimer: null,
       providerModal: false, providerDraft: null, providerBusy: false, providerError: '',
     };
@@ -156,7 +158,10 @@ export default {
     reasoningEffort() { if (!this.applyingSettings) this.scheduleSettings(); },
     search() { if (!this.applyingSettings) this.scheduleSettings(); },
   },
-  mounted() { if (this.token) this.refresh(); },
+  mounted() {
+    this.applyTheme();
+    if (this.token) this.refresh();
+  },
   methods: {
     async login(payload) {
       this.busy = true; this.authError = '';
@@ -240,6 +245,12 @@ export default {
       if (!window.confirm('删除服务商「' + p.name + '」？')) return;
       try { await this.api.deleteProvider(p.id); if (this.providerId === p.id) this.providerId = ''; await this.refresh(); } catch (e) { this.providerError = e.message; }
     },
+    applyTheme() { document.documentElement.classList.toggle('dark', this.dark); },
+    toggleTheme() {
+      this.dark = !this.dark;
+      localStorage.setItem('reinchat_theme', this.dark ? 'dark' : 'light');
+      this.applyTheme();
+    },
     toggleRail() {
       if (window.innerWidth <= 800) { this.railOpen = !this.railOpen; return; }
       this.railCollapsed = !this.railCollapsed;
@@ -281,12 +292,24 @@ export default {
       } catch (e) { assistant.error = e.message; assistant.status = 'ERROR'; }
       finally { assistant.streaming = false; this.$delete(this.streams, conversation.id); }
     },
+    async responseError(res, label) {
+      const raw = await res.text();
+      let detail = raw;
+      try {
+        const data = JSON.parse(raw);
+        detail = (data.error && (data.error.message || data.error.code)) || data.message || raw;
+      } catch (e) { /* keep raw */ }
+      const error = new Error(label + ' ' + res.status + (detail ? '：' + String(detail).slice(0, 1200) : ''));
+      error.status = res.status;
+      error.detail = raw.slice(0, 4000);
+      return error;
+    },
     async streamRelay(conversation, assistant) {
       const settings = conversation.settings || {};
       const history = conversation.messages.filter((m) => m !== assistant && m.content).map((m) => ({ id: m.id, role: m.role, content: m.content, images: [], createdAt: m.createdAt, status: 'COMPLETE', error: null }));
       const job = await this.api.request('/v1/relay/jobs', { method: 'POST', body: { providerId: settings.providerId || this.providerId, conversationId: conversation.id, model: settings.model || this.model, reasoningEffort: settings.reasoningEffort || this.reasoningEffort, search: settings.search !== false, messages: history } });
       const res = await fetch(this.api.base() + '/v1/relay/jobs/' + encodeURIComponent(job.id) + '/events', { headers: { Authorization: 'Bearer ' + this.token } });
-      if (!res.ok) throw new Error('relay HTTP ' + res.status);
+      if (!res.ok) throw await this.responseError(res, 'relay');
       const reader = res.body.getReader(); const decoder = new TextDecoder(); let buffer = '';
       while (true) {
         const part = await reader.read(); if (part.done) break;
@@ -297,17 +320,26 @@ export default {
           const data = block.split('\n').filter((l) => l.startsWith('data:')).map((l) => l.slice(5).trim()).join('');
           if (!data) continue;
           const event = JSON.parse(data);
+          if (event.type === 'snapshot') {
+            if (event.text) assistant.content = event.text;
+            if (event.reasoning) assistant.reasoning = event.reasoning;
+            if (event.error) throw new Error(String(event.error).slice(0, 4000));
+          }
           if (event.type === 'delta') assistant.content += event.text || '';
           if (event.type === 'reasoning') assistant.reasoning += event.text || '';
-          if (event.type === 'error') throw new Error(event.error || 'relay failed');
-          if (event.type === 'status' && (event.status === 'completed' || event.status === 'failed')) return;
+          if (event.type === 'error') throw new Error((event.error || 'relay failed') + (event.status ? '（' + event.status + '）' : ''));
+          if (event.type === 'status' && (event.status === 'failed' || event.status === 'cancelled')) {
+            throw new Error(event.error || (event.status === 'cancelled' ? '生成已取消' : '生成失败'));
+          }
+          if (event.type === 'status' && event.status === 'completed') return;
         }
       }
+      if (!assistant.content) throw new Error('连接已中断，未收到模型输出');
     },
     async streamDsh(conversation, assistant, text) {
       const settings = conversation.settings || {};
       const res = await fetch(this.api.base() + '/v1/agent/run', { method: 'POST', headers: { Authorization: 'Bearer ' + this.token, 'Content-Type': 'application/json' }, body: JSON.stringify({ providerId: settings.providerId || this.providerId, model: settings.model || this.model, reasoningEffort: settings.reasoningEffort || this.reasoningEffort, conversationId: conversation.id, text }) });
-      if (!res.ok) throw new Error('DSH HTTP ' + res.status);
+      if (!res.ok) throw await this.responseError(res, 'DSH');
       const reader = res.body.getReader(); const decoder = new TextDecoder(); let buffer = '';
       while (true) {
         const part = await reader.read(); if (part.done) break;
@@ -325,7 +357,7 @@ export default {
           }
           if (name === 'event' && event.type === 'tool/call') (assistant.toolCalls = assistant.toolCalls || []).push({ callId: String(event.data?.callId || ''), name: String(event.data?.name || 'tool'), status: 'running' });
           if (name === 'done') return;
-          if (name === 'error') throw new Error(event.message || 'DSH failed');
+          if (name === 'error') throw new Error((event.message || 'DSH failed') + (event.stderr ? '\n' + String(event.stderr).slice(-2000) : ''));
         }
       }
     },
