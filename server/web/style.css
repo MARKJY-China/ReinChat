@@ -250,6 +250,22 @@ button.refresh {
   border-radius: 17px 5px 17px 17px; padding: 10px 14px;
 }
 .msg.error .msg-body, .msg-error { color: var(--danger); font-size: 12px; margin-top: 6px; }
+.tool-stack { display: flex; flex-direction: column; gap: 5px; margin: 0 0 9px; }
+.tool-card {
+  display: flex; align-items: center; gap: 7px; flex-wrap: wrap;
+  padding: 7px 9px; border: 1px solid rgba(138,240,195,.16); border-radius: 9px;
+  background: rgba(138,240,195,.045); color: var(--muted); font-size: 10.5px;
+}
+.tool-pulse { width: 6px; height: 6px; border-radius: 50%; background: var(--mint); opacity: .8; }
+.tool-card.running .tool-pulse { animation: pulse 1.2s ease-in-out infinite; }
+.tool-card.failed { border-color: rgba(255,141,141,.25); }
+.tool-card.failed .tool-pulse { background: var(--danger); }
+.tool-card.done .tool-pulse { background: var(--mint-deep); }
+.tool-name { color: var(--text); font-weight: 600; }
+.tool-status { margin-left: auto; color: var(--muted); }
+.tool-detail { flex-basis: 100%; }
+.tool-detail summary { color: var(--muted); cursor: pointer; }
+.tool-detail pre { white-space: pre-wrap; max-height: 160px; overflow: auto; margin: 5px 0 0; color: var(--muted); font: 10.5px/1.5 inherit; }
 .msg-stream {
   display: inline-flex; align-items: center; gap: 7px; margin-top: 6px;
   color: var(--mint); font-size: 10.5px; letter-spacing: .1px;

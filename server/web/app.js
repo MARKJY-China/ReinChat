@@ -472,7 +472,7 @@
         };
         const assistant = {
           id: this.uuid(), role: 'assistant', content: '', reasoning: '', model: this.model,
-          images: [], createdAt: now + 1, status: 'COMPLETE', error: null, streaming: true,
+          toolCalls: [], images: [], createdAt: now + 1, status: 'COMPLETE', error: null, streaming: true,
         };
         conversation.messages.push(userMessage, assistant);
         if (!conversation.title || conversation.title === '新会话') {
@@ -547,7 +547,7 @@
         conversation.messages = conversation.messages.slice(0, userIndex + 1);
         const assistant = {
           id: this.uuid(), role: 'assistant', content: '', reasoning: '', model: this.model,
-          images: [], createdAt: Date.now(), status: 'COMPLETE', error: null, streaming: true,
+          toolCalls: [], images: [], createdAt: Date.now(), status: 'COMPLETE', error: null, streaming: true,
         };
         conversation.messages.push(assistant);
         this.conversationCache[conversation.id] = conversation;
@@ -658,12 +658,39 @@
                       assistant.reasoning = (assistant.reasoning || '') + payload.chunk.text;
                     } else if (payload.chunk.type === 'tool-call-delta') {
                       assistant.toolActivity = true;
+                      const callId = String(payload.chunk.id || '');
+                      let card = assistant.toolCalls.find(function (t) { return t.callId === callId; });
+                      if (!card) {
+                        card = { callId: callId, name: payload.chunk.name || 'tool', status: 'running', arguments: '' };
+                        assistant.toolCalls.push(card);
+                      }
+                      if (payload.chunk.name) card.name = payload.chunk.name;
+                      card.arguments = (card.arguments || '') + (payload.chunk.argumentsDelta || '');
                     }
                   }
                   if (this.activeId === conversation.id && this.follow) this.$nextTick(this.scrollToBottom);
                 } else if (eventName === 'event') {
-                  if (payload.type === 'tool/call' || payload.type === 'tool/result') {
+                  if (payload.type === 'tool/call') {
                     assistant.toolActivity = true;
+                    const data = payload.data || {};
+                    const callId = String(data.callId || '');
+                    if (!assistant.toolCalls.some(function (t) { return t.callId === callId; })) {
+                      assistant.toolCalls.push({
+                        callId: callId,
+                        name: String(data.name || 'tool'),
+                        status: 'running',
+                        arguments: String(data.arguments || ''),
+                      });
+                    }
+                  } else if (payload.type === 'tool/result') {
+                    assistant.toolActivity = true;
+                    const message = (payload.data && payload.data.message) || {};
+                    const callId = String(message.toolCallId || '');
+                    const card = assistant.toolCalls.find(function (t) { return t.callId === callId; });
+                    if (card) {
+                      card.status = message.isError ? 'failed' : 'done';
+                      card.detail = (message.content || []).map(function (b) { return b.text || ''; }).join('').slice(0, 4000);
+                    }
                   }
                   if (payload.type === 'turn/end') {
                     const reason = payload.data && payload.data.reason;
@@ -777,8 +804,16 @@
             },
           });
         }
+        const localMessages = {};
+        (conversation.messages || []).forEach(function (m) { localMessages[m.id] = m; });
+        const mergedMessages = (saved.messages || conversation.messages).map(function (m) {
+          const local = localMessages[m.id];
+          return Object.assign({}, m, {
+            toolCalls: (local && local.toolCalls) || [],
+          });
+        });
         const merged = Object.assign({}, saved, {
-          messages: saved.messages || conversation.messages,
+          messages: mergedMessages,
           settings: saved.settings || conversation.settings,
         });
         this.$set(this.conversationCache, merged.id, merged);

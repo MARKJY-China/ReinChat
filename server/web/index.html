@@ -107,6 +107,14 @@
                   <summary>思考过程</summary>
                   <pre>{{ cleanText(m.reasoning) }}</pre>
                 </details>
+                <div class="tool-stack" v-if="m.toolCalls && m.toolCalls.length">
+                  <div v-for="t in m.toolCalls" :key="t.callId || t.name" class="tool-card" :class="t.status">
+                    <span class="tool-pulse"></span>
+                    <span class="tool-name">{{ t.name }}</span>
+                    <span class="tool-status">{{ t.status === 'running' ? '运行中' : (t.status === 'failed' ? '失败' : '完成') }}</span>
+                    <details v-if="t.detail" class="tool-detail"><summary>结果</summary><pre>{{ t.detail }}</pre></details>
+                  </div>
+                </div>
                 <div class="msg-body markdown-body" v-html="renderMarkdown(m.content)"></div>
                 <div class="msg-stream" v-if="m.streaming"><span class="stream-dot"></span>{{ m.content ? '正在生成…' : '正在思考…' }}</div>
                 <div class="msg-error" v-if="m.error">{{ m.error }}</div>
