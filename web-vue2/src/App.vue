@@ -1,52 +1,73 @@
 <template>
   <LoginView v-if="!token" :error="authError" :busy="busy" :initial-server="server" @submit="login" />
-  <div v-else class="app-shell">
-    <aside class="sidebar">
-      <div class="sidebar-head">
-        <div class="brand small"><img class="brand-icon" :src="'icon-192.png'" alt=""><span>ReinChat <small>WEB</small></span></div>
+  <div v-else class="app">
+    <aside class="rail">
+      <div class="rail-top">
+        <span class="wordmark small"><span class="mark">R</span>ReinChat</span>
         <button class="icon-btn" title="新建会话" @click="newConversation">＋</button>
       </div>
-      <button class="new-chat" @click="newConversation"><span class="new-chat-icon">＋</span><span>新建会话</span><span class="kbd">N</span></button>
-      <div class="section-label"><span>会话</span><span>{{ conversations.length }}</span></div>
-      <div class="conv-list">
-        <button v-for="c in conversations" :key="c.id" class="conv" :class="{ active: c.id === activeId }" @click="openConversation(c.id)">
-          <span class="conv-dot"></span>
-          <span class="conv-main"><span class="conv-title">{{ c.title || '未命名会话' }}</span><span class="conv-preview">{{ c.preview }}</span></span>
-          <span class="conv-meta">{{ formatShort(c.updatedAt) }}</span>
+      <div class="rail-label">会话</div>
+      <nav class="rail-list">
+        <button v-for="c in conversations" :key="c.id" class="rail-item" :class="{ active: c.id === activeId }" @click="openConversation(c.id)">
+          <span class="rail-item-title">{{ c.title || '新会话' }}</span>
+          <span class="rail-item-time">{{ formatShort(c.updatedAt) }}</span>
         </button>
-        <p class="empty-small" v-if="!conversations.length">还没有云端会话</p>
-      </div>
-      <div class="sidebar-foot">
-        <div class="account-card">
-          <div class="account-top"><span class="avatar">{{ user.slice(0, 1).toUpperCase() }}</span><span class="account-name">{{ user }}<small>LV{{ level }}</small></span><button class="link" @click="logout">退出</button></div>
-          <div class="account-links"><button class="link small" @click="openProviderManager">服务商管理</button><a class="link small" href="/admin">管理台</a></div>
+        <p class="rail-empty" v-if="!conversations.length">还没有会话</p>
+      </nav>
+      <div class="rail-bottom">
+        <button class="user-row" @click="userMenu = !userMenu">
+          <span class="avatar">{{ user.slice(0, 1).toUpperCase() }}</span>
+          <span class="user-name">{{ user }}<small>LV{{ level }}</small></span>
+          <span class="more">···</span>
+        </button>
+        <div class="popover" v-if="userMenu">
+          <button @click="openProviderManager(); userMenu = false">服务商管理</button>
+          <a href="/admin">管理台</a>
+          <button @click="logout">退出登录</button>
         </div>
       </div>
     </aside>
-    <main class="chat">
-      <header class="chat-head">
-        <div class="head-title"><div class="sync-line"><span class="sync live">实时同步中</span></div><h1>{{ active ? (active.title || '新会话') : 'ReinChat' }}</h1></div>
-        <div class="head-actions"><button class="ghost head-btn" @click="refresh">刷新</button><button class="primary head-btn" @click="newConversation">新对话</button></div>
+
+    <main class="main">
+      <header class="topbar">
+        <button class="icon-btn rail-toggle" @click="railOpen = !railOpen">☰</button>
+        <div class="crumb"><span class="crumb-root">ReinChat</span><span class="crumb-sep">/</span><span>{{ active ? (active.title || '新会话') : '新会话' }}</span></div>
+        <div class="top-actions">
+          <span class="sync-dot" title="实时同步"></span>
+          <button class="quiet-btn small" @click="refresh">刷新</button>
+        </div>
       </header>
-      <section class="messages" ref="messages">
-        <div class="messages-inner">
+
+      <section class="thread" ref="messages">
+        <div class="thread-inner">
           <template v-if="active">
             <MessageItem v-for="(m, index) in active.messages" :key="m.id" :message="m" :streaming="sending" @retry="retry(m)" @edit="beginEdit" @rewind="rewind(index)" />
-            <div class="empty-chat" v-if="!active.messages.length"><img :src="'icon-192.png'" alt=""><h2>开始新的对话</h2><p>在下方输入问题，ReinChat 会实时同步到你的所有设备。</p></div>
+            <div class="welcome" v-if="!active.messages.length">
+              <p class="eyebrow">New conversation</p>
+              <h1>今天想聊什么？</h1>
+              <p class="welcome-sub">在下方输入消息。选择你的模型，或者直接开始。</p>
+            </div>
           </template>
-          <div class="empty-chat" v-else><img :src="'icon-192.png'" alt=""><h2>选择一个会话</h2><p>或点击左侧「新建会话」开始。</p></div>
+          <div class="welcome" v-else>
+            <p class="eyebrow">ReinChat</p>
+            <h1>开始一段对话。</h1>
+            <p class="welcome-sub">从左侧选择会话，或新建一个。</p>
+            <button class="primary-btn" @click="newConversation">新建会话<span class="arrow">→</span></button>
+          </div>
         </div>
       </section>
+
       <ComposerBar
         :provider-id="providerId" :model="model" :reasoning-effort="reasoningEffort" :search="search" :draft="draft" :sending="sending" :level="level"
         :provider-options="providerOptions" :model-options="modelOptions" :reasoning-options="reasoningOptions"
         @update:providerId="setProvider" @update:model="model = $event" @update:reasoningEffort="reasoningEffort = $event"
         @update:search="search = $event" @update:draft="draft = $event" @send="send" />
     </main>
+
     <div v-if="providerModal" class="modal-mask" @click.self="providerModal = false">
       <div class="modal-card">
         <div class="modal-head">
-          <div><h2>服务商</h2><p class="muted">配置用于服务端 Agent 的模型服务</p></div>
+          <div><h2>服务商</h2><p class="muted">用于服务端 Agent 的模型服务</p></div>
           <button class="icon-btn" @click="providerModal = false">×</button>
         </div>
         <template v-if="!providerDraft">
@@ -54,29 +75,29 @@
             <div v-for="p in providerRecords" :key="p.id" class="provider-row">
               <div class="provider-avatar">{{ p.name.slice(0, 1).toUpperCase() }}</div>
               <div class="provider-info"><strong>{{ p.name }}</strong><span>{{ p.baseUrl }}</span><small>{{ p.model }} · {{ p.protocol }}</small></div>
-              <button class="ghost small" @click="editProvider(p)">编辑</button>
-              <button class="ghost small danger-text" @click="deleteProvider(p)">删除</button>
+              <button class="quiet-btn small" @click="editProvider(p)">编辑</button>
+              <button class="quiet-btn small danger" @click="deleteProvider(p)">删除</button>
             </div>
-            <p v-if="!providerRecords.length" class="empty-small">暂无服务商</p>
+            <p class="rail-empty" v-if="!providerRecords.length">暂无服务商</p>
           </div>
-          <div class="modal-actions"><button class="primary" @click="newProvider">＋ 添加服务商</button></div>
+          <div class="modal-actions"><button class="primary-btn" @click="newProvider">添加服务商</button></div>
         </template>
         <template v-else>
           <div class="form-grid">
-            <label>名称<input v-model.trim="providerDraft.name" placeholder="DeepSeek"></label>
-            <label>协议
-              <div class="segmented">
-                <button :class="{ active: providerDraft.protocol === 'CHAT_COMPLETIONS' }" @click="providerDraft.protocol = 'CHAT_COMPLETIONS'">Chat Completions</button>
-                <button :class="{ active: providerDraft.protocol === 'RESPONSES' }" @click="providerDraft.protocol = 'RESPONSES'">Responses</button>
-              </div>
+            <label class="field">名称<input v-model.trim="providerDraft.name" placeholder="DeepSeek"></label>
+            <label class="field">协议
+              <span class="segmented">
+                <button type="button" :class="{ active: providerDraft.protocol === 'CHAT_COMPLETIONS' }" @click="providerDraft.protocol = 'CHAT_COMPLETIONS'">Chat</button>
+                <button type="button" :class="{ active: providerDraft.protocol === 'RESPONSES' }" @click="providerDraft.protocol = 'RESPONSES'">Responses</button>
+              </span>
             </label>
-            <label>Base URL<input v-model.trim="providerDraft.baseUrl" placeholder="https://api.deepseek.com/v1"></label>
-            <label>API Key<input v-model.trim="providerDraft.apiKey" type="password"></label>
-            <label class="wide">模型（逗号分隔）<input v-model.trim="providerDraft.model" placeholder="deepseek-chat,deepseek-reasoner"></label>
-            <label class="wide">系统提示词<textarea v-model="providerDraft.systemPrompt" rows="3"></textarea></label>
+            <label class="field wide">Base URL<input v-model.trim="providerDraft.baseUrl" placeholder="https://api.deepseek.com/v1"></label>
+            <label class="field wide">API Key<input v-model.trim="providerDraft.apiKey" type="password"></label>
+            <label class="field wide">模型（逗号分隔）<input v-model.trim="providerDraft.model" placeholder="deepseek-chat"></label>
+            <label class="field wide">系统提示词<textarea v-model="providerDraft.systemPrompt" rows="3"></textarea></label>
           </div>
-          <p class="error" v-if="providerError">{{ providerError }}</p>
-          <div class="modal-actions"><button class="ghost" @click="providerDraft = null">返回</button><button class="primary" :disabled="providerBusy" @click="saveProvider">{{ providerBusy ? '保存中…' : '保存' }}</button></div>
+          <p class="auth-error" v-if="providerError">{{ providerError }}</p>
+          <div class="modal-actions"><button class="quiet-btn" @click="providerDraft = null">返回</button><button class="primary-btn" :disabled="providerBusy" @click="saveProvider">{{ providerBusy ? '保存中…' : '保存' }}</button></div>
         </template>
       </div>
     </div>
@@ -105,7 +126,7 @@ export default {
       authError: '', busy: false,
       conversations: [], active: null, activeId: '',
       providers: [], providerRecords: [], providerId: '', model: '', reasoningEffort: 'high', search: true,
-      draft: '', level: 1, agentAvailable: false,
+      draft: '', level: 1, agentAvailable: false, userMenu: false, railOpen: false,
       conversationCache: {}, streams: {}, applyingSettings: false, settingsTimer: null,
       providerModal: false, providerDraft: null, providerBusy: false, providerError: '',
     };
@@ -160,7 +181,19 @@ export default {
     },
     async openConversation(id) {
       this.activeId = id;
-      try { this.active = await this.api.conversation(id); } catch (e) { this.authError = e.message; }
+      this.railOpen = false;
+      const cached = this.conversationCache[id];
+      if (cached && this.streams[id]) {
+        this.active = cached;
+        this.applySettings(cached);
+        return;
+      }
+      try {
+        const data = await this.api.conversation(id);
+        this.$set(this.conversationCache, id, data);
+        this.active = data;
+        this.applySettings(data);
+      } catch (e) { this.authError = e.message; }
     },
     setProvider(id) {
       this.providerId = id;
