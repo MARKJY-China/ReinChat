@@ -18,12 +18,13 @@ import (
 const maxTokenTTLHours = 24 * 365 * 100
 
 type envConfig struct {
-	Addr          string
-	DataDir       string
-	MasterKey     []byte
-	TokenHours    int
-	AdminToken    string
-	DSHGatewayURL string
+	Addr             string
+	DataDir          string
+	MasterKey        []byte
+	TokenHours       int
+	AdminToken       string
+	DSHGatewayURL    string
+	DeepSeekToolsKey string
 }
 
 func main() {
@@ -40,13 +41,14 @@ func run(logger *log.Logger) error {
 		return err
 	}
 	app, err := NewServer(Config{
-		DataDir:       env.DataDir,
-		MasterKey:     env.MasterKey,
-		TokenTTL:      time.Duration(env.TokenHours) * time.Hour,
-		BcryptCost:    productionBcryptCost,
-		AdminToken:    env.AdminToken,
-		DSHGatewayURL: env.DSHGatewayURL,
-		Logger:        logger,
+		DataDir:          env.DataDir,
+		MasterKey:        env.MasterKey,
+		TokenTTL:         time.Duration(env.TokenHours) * time.Hour,
+		BcryptCost:       productionBcryptCost,
+		AdminToken:       env.AdminToken,
+		DSHGatewayURL:    env.DSHGatewayURL,
+		DeepSeekToolsKey: env.DeepSeekToolsKey,
+		Logger:           logger,
 	})
 	if err != nil {
 		return err
@@ -98,11 +100,12 @@ func run(logger *log.Logger) error {
 
 func loadEnvConfig() (envConfig, error) {
 	cfg := envConfig{
-		Addr:          envOrDefault("REINCHAT_ADDR", ":8080"),
-		DataDir:       envOrDefault("REINCHAT_DATA_DIR", "/data"),
-		TokenHours:    defaultTokenTTLHours,
-		AdminToken:    strings.TrimSpace(os.Getenv("REINCHAT_ADMIN_TOKEN")),
-		DSHGatewayURL: strings.TrimSpace(os.Getenv("REINCHAT_DSH_GATEWAY_URL")),
+		Addr:             envOrDefault("REINCHAT_ADDR", ":8080"),
+		DataDir:          envOrDefault("REINCHAT_DATA_DIR", "/data"),
+		TokenHours:       defaultTokenTTLHours,
+		AdminToken:       strings.TrimSpace(os.Getenv("REINCHAT_ADMIN_TOKEN")),
+		DSHGatewayURL:    strings.TrimSpace(os.Getenv("REINCHAT_DSH_GATEWAY_URL")),
+		DeepSeekToolsKey: strings.TrimSpace(os.Getenv("REINCHAT_DEEPSEEK_TOOLS_KEY")),
 	}
 	if strings.TrimSpace(cfg.Addr) == "" {
 		return envConfig{}, errors.New("REINCHAT_ADDR must not be empty")

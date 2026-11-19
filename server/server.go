@@ -34,16 +34,17 @@ const (
 // Config is the server's internal configuration. Environment parsing lives in
 // main.go; tests construct Config directly.
 type Config struct {
-	DataDir        string
-	MasterKey      []byte
-	TokenTTL       time.Duration
-	BcryptCost     int
-	AuthRateLimit  int
-	AuthRateWindow time.Duration
-	Logger         *log.Logger
-	Now            func() time.Time
-	AdminToken     string
-	DSHGatewayURL  string
+	DataDir          string
+	MasterKey        []byte
+	TokenTTL         time.Duration
+	BcryptCost       int
+	AuthRateLimit    int
+	AuthRateWindow   time.Duration
+	Logger           *log.Logger
+	Now              func() time.Time
+	AdminToken       string
+	DSHGatewayURL    string
+	DeepSeekToolsKey string
 }
 
 type Server struct {
@@ -129,8 +130,8 @@ func NewServer(cfg Config) (*Server, error) {
 		logger:    cfg.Logger,
 		dummyHash: dummyHash,
 		now:       cfg.Now,
-		webSearch: defaultWebSearch,
-		webFetch:  fetchReadablePage,
+		webSearch: newWebSearch(cfg.DeepSeekToolsKey),
+		webFetch:  newWebFetch(cfg.DeepSeekToolsKey),
 	}
 	s.cleanupExpiredTokens(context.Background())
 	return s, nil

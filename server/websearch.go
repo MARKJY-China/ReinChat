@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"html"
 	"io"
@@ -12,6 +14,94 @@ import (
 	"strings"
 	"time"
 )
+
+func newWebSearch(key string) func(context.Context, string) []webResult {
+	if strings.TrimSpace(key) == "" {
+		return defaultWebSearch
+	}
+	return func(ctx context.Context, query string) []webResult {
+		return deepSeekSearch(ctx, key, query)
+	}
+}
+
+func newWebFetch(key string) func(context.Context, string) string {
+	if strings.TrimSpace(key) == "" {
+		return fetchReadablePage
+	}
+	return func(ctx context.Context, rawURL string) string {
+		return deepSeekFetch(ctx, key, rawURL)
+	}
+}
+
+func deepSeekSearch(ctx context.Context, key, query string) []webResult {
+	body := map[string]any{"query": query, "max_results": 8}
+	raw, _ := json.Marshal(body)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://api.deepseek.com/v1/tools/search", bytes.NewReader(raw))
+	if err != nil {
+		return nil
+	}
+	req.Header.Set("Authorization", "Bearer "+key)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := (&http.Client{Timeout: 15 * time.Second}).Do(req)
+	if err != nil {
+		return nil
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil
+	}
+	var decoded struct {
+		Results []struct {
+			Title   string `json:"title"`
+			URL     string `json:"url"`
+			Snippet string `json:"snippet"`
+			Summary string `json:"summary"`
+		} `json:"results"`
+	}
+	if json.NewDecoder(io.LimitReader(resp.Body, 4<<20)).Decode(&decoded) != nil {
+		return nil
+	}
+	results := make([]webResult, 0, len(decoded.Results))
+	for _, item := range decoded.Results {
+		if !strings.HasPrefix(item.URL, "http://") && !strings.HasPrefix(item.URL, "https://") {
+			continue
+		}
+		snippet := strings.TrimSpace(item.Snippet)
+		if snippet == "" {
+			snippet = strings.TrimSpace(item.Summary)
+		}
+		results = append(results, webResult{Title: strings.TrimSpace(item.Title), URL: item.URL, Snippet: truncateRunes(snippet, 500)})
+		if len(results) >= 8 {
+			break
+		}
+	}
+	return results
+}
+
+func deepSeekFetch(ctx context.Context, key, rawURL string) string {
+	raw, _ := json.Marshal(map[string]string{"url": rawURL})
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://api.deepseek.com/v1/tools/fetch", bytes.NewReader(raw))
+	if err != nil {
+		return ""
+	}
+	req.Header.Set("Authorization", "Bearer "+key)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := (&http.Client{Timeout: 20 * time.Second}).Do(req)
+	if err != nil {
+		return ""
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return ""
+	}
+	var decoded struct {
+		Content string `json:"content"`
+	}
+	if json.NewDecoder(io.LimitReader(resp.Body, 8<<20)).Decode(&decoded) != nil {
+		return ""
+	}
+	return truncateRunes(strings.TrimSpace(decoded.Content), 12000)
+}
 
 var (
 	searchResultBlock = regexp.MustCompile(`(?is)<div[^>]+class="[^"]*result[^"]*"[^>]*>(.*?)</div>\s*</div>`)
