@@ -55,7 +55,10 @@
     <div class="stream-line" v-if="message.streaming"><span></span>{{ streamPhase === 'streaming' ? 'AI 正在输出' : '请求服务端中' }}<button class="stream-stop" @click="$emit('stop')">停止</button></div>
     <div class="turn-error" v-if="message.error">
       <strong>生成失败</strong>
-      <details><summary>查看详情</summary><pre>{{ message.error }}</pre></details>
+      <div class="error-links">
+        <details><summary>查看详情</summary><pre>{{ message.error }}</pre></details>
+        <button class="copy-log" @click="copyLog">{{ logCopied ? '已复制日志' : '复制完整日志' }}</button>
+      </div>
     </div>
     <div class="turn-actions" v-if="!message.streaming">
       <button v-if="message.role === 'user'" @click="$emit('edit', message)">编辑</button>
@@ -77,7 +80,7 @@ export default {
   name: 'MessageItem',
   components: { ImagePreview, SegmentTimeline },
   props: { message: { type: Object, required: true }, streaming: Boolean, streamPhase: { type: String, default: '' } },
-  data() { return { copied: false, now: Date.now(), timer: null, previewIndex: -1 }; },
+  data() { return { copied: false, logCopied: false, now: Date.now(), timer: null, previewIndex: -1 }; },
   computed: {
     html() { return renderMarkdown(this.message.content, this.sources); },
     segments() { return (this.message.segments || []).slice(); },
@@ -123,6 +126,51 @@ export default {
   },
   methods: {
     renderText(text) { return renderMarkdown(text || '', this.sources); },
+    buildLog() {
+      const lines = [];
+      lines.push('# ReinChat 生成失败日志');
+      lines.push('时间: ' + new Date(this.message.createdAt || Date.now()).toISOString());
+      lines.push('模型: ' + (this.message.model || '-'));
+      lines.push('状态: ' + (this.message.status || '-'));
+      lines.push('');
+      lines.push('## 错误');
+      lines.push(this.message.error || '');
+      if (this.message.segments && this.message.segments.length) {
+        lines.push('');
+        lines.push('## 过程');
+        this.message.segments.forEach((segment) => {
+          if (segment.type === 'tool') {
+            lines.push(`- [tool] ${segment.name || ''} ${segment.status || ''} ${segment.query || segment.url || ''} ${segment.summary || ''}`);
+          } else {
+            lines.push('- [reasoning] ' + String(segment.text || '').slice(0, 400));
+          }
+        });
+      }
+      if (this.sources.length) {
+        lines.push('');
+        lines.push('## 来源');
+        this.sources.forEach((source) => lines.push(`[${source.index}] ${source.title} ${source.url}`));
+      }
+      if (this.message.content) {
+        lines.push('');
+        lines.push('## 已输出正文');
+        lines.push(this.message.content);
+      }
+      return lines.join('\n');
+    },
+    async copyLog() {
+      const text = this.buildLog();
+      try {
+        if (navigator.clipboard) await navigator.clipboard.writeText(text);
+        else {
+          const area = document.createElement('textarea');
+          area.value = text; document.body.appendChild(area); area.select();
+          document.execCommand('copy'); area.remove();
+        }
+        this.logCopied = true;
+        setTimeout(() => { this.logCopied = false; }, 1600);
+      } catch (e) { /* ignore */ }
+    },
     startClock() {
       if (this.timer) return;
       this.timer = setInterval(() => { this.now = Date.now(); }, 100);

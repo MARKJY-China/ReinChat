@@ -467,3 +467,7 @@ html.dark .tool-detail pre::-webkit-scrollbar-thumb { background: rgba(220,215,2
 .live-timeline { display: flex; flex-direction: column; gap: 9px; margin: 2px 0 4px; }
 .live-timeline .prose { margin: 0; }
 .live-timeline .thinking, .live-timeline .tool-card { margin: 0; }
+.error-links { display: flex; align-items: flex-start; gap: 12px; margin-top: 4px; }
+.error-links details { flex: 1; min-width: 0; }
+.copy-log { flex: 0 0 auto; border: 0; background: transparent; color: #8c6a62; font-size: 10.5px; padding: 0; }
+.copy-log:hover { color: var(--danger); }

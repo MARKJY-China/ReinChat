@@ -109,9 +109,17 @@ func (s *Server) runToolLoop(ctx context.Context, jobID string, p *relayProvider
 				return false
 			}
 			message := upstreamError(status, rawBody)
+			detail := message
+			if len(rawBody) > 0 && !strings.Contains(message, string(rawBody)) {
+				detail += "\n\n上游响应：\n" + truncateRunes(string(rawBody), 2000)
+			}
+			if requestJSON, marshalErr := json.Marshal(body); marshalErr == nil {
+				detail += fmt.Sprintf("\n\n请求摘要（第 %d 轮，model=%s，effort=%s）：\n%s", round+1, model, effort, truncateRunes(string(requestJSON), 4000))
+			}
+			detail += "\n\njob=" + jobID
 			textNow, reasoningNow := textSoFar(messages), ""
-			_ = s.updateRelayJob(jobID, "failed", &textNow, &reasoningNow, message)
-			s.relay.publish(jobID, relayEvent{Type: "error", Status: "failed", Error: message})
+			_ = s.updateRelayJob(jobID, "failed", &textNow, &reasoningNow, detail)
+			s.relay.publish(jobID, relayEvent{Type: "error", Status: "failed", Error: detail})
 			return true
 		}
 		choice := firstChoice(resp)
