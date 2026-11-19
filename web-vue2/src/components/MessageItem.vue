@@ -12,7 +12,11 @@
       <SegmentTimeline :segments="segments" :now="now" :streaming="message.streaming" />
     </div>
 
-    <details class="work-log" v-else-if="hasFinishedWork && !message.streaming">
+    <div class="process" v-else-if="segments.length && !message.streaming && !hasTools">
+      <SegmentTimeline :segments="segments" :now="now" :streaming="false" />
+    </div>
+
+    <details class="work-log" v-else-if="hasFinishedWork && hasTools && !message.streaming">
       <summary>
         <svg class="chev" viewBox="0 0 12 12" aria-hidden="true"><path d="M4 2.2 7.8 6 4 9.8"/></svg>
         <span>已完成工作</span>
@@ -89,6 +93,9 @@ export default {
     },
     hasFinishedWork() {
       return this.segments.length > 0 || !!this.message.reasoning;
+    },
+    hasTools() {
+      return this.segments.some((segment) => segment.type === 'tool');
     },
     workDuration() {
       const starts = this.segments.map((s) => Number(s.startedAt) || 0).filter(Boolean);
