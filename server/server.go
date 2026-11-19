@@ -358,7 +358,7 @@ func (s *Server) setSecurityHeaders(w http.ResponseWriter, r *http.Request) {
 	h.Set("X-Frame-Options", "DENY")
 	h.Set("Referrer-Policy", "no-referrer")
 	h.Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
-	h.Set("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self'; frame-ancestors 'none'; base-uri 'none'")
+	h.Set("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; font-src 'self'; frame-ancestors 'none'; base-uri 'none'")
 	h.Set("Cache-Control", "no-store")
 	if r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https") {
 		h.Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
