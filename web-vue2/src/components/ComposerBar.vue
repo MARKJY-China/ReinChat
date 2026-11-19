@@ -1,7 +1,8 @@
 <template>
   <footer class="composer-dock">
     <div class="composer">
-      <div class="pdf-chip" v-if="pdfName"><span class="pdf-icon">PDF</span><span class="pdf-name">{{ pdfName }}</span><button class="pdf-remove" @click="$emit('remove-pdf')">×</button></div>
+      <div class="pdf-chip loading" v-if="pdfBusy"><span class="pdf-icon">PDF</span><span class="pdf-name">正在 OCR 识别…</span><span class="mini-spinner"></span></div>
+      <div class="pdf-chip" v-else-if="pdfName"><span class="pdf-icon">PDF</span><span class="pdf-name">{{ pdfName }}</span><button class="pdf-remove" @click="$emit('remove-pdf')">×</button></div>
       <p class="pdf-error" v-if="pdfError">{{ pdfError }}</p>
       <div class="image-strip" v-if="imagePreviews && imagePreviews.length">
         <span v-for="(img, index) in imagePreviews" :key="index" class="image-thumb"><img :src="img.url" :alt="img.name" @click="previewIndex = index"><button @click="$emit('remove-image', index)">×</button></span>

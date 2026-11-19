@@ -398,3 +398,5 @@ html.dark .thread:hover { scrollbar-color: rgba(235,231,220,.28) transparent; }
 html.dark .thread::-webkit-scrollbar-thumb { background: rgba(235,231,220,.13); }
 html.dark .thread:hover::-webkit-scrollbar-thumb { background: rgba(235,231,220,.3); }
 .pdf-error { margin: 5px 0 0; color: var(--danger); font-size: 10.5px; }
+.pdf-chip.loading { color: var(--muted); }
+.mini-spinner { width: 11px; height: 11px; margin-left: auto; border: 1.5px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: spin .7s linear infinite; }

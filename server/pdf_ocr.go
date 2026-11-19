@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -55,7 +56,7 @@ func (s *Server) handlePDFOCR(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Minute)
 	defer cancel()
 	prefix := filepath.Join(tempDir, "page")
-	cmd := exec.CommandContext(ctx, "pdftoppm", "-jpeg", "-r", "150", pdfPath, prefix)
+	cmd := exec.CommandContext(ctx, "pdftoppm", "-jpeg", "-r", "110", pdfPath, prefix)
 	if output, err := cmd.CombinedOutput(); err != nil {
 		writeAPIError(w, http.StatusBadGateway, "pdf_render_failed", strings.TrimSpace(string(output)))
 		return
@@ -65,20 +66,25 @@ func (s *Server) handlePDFOCR(w http.ResponseWriter, r *http.Request) {
 	if len(images) > 200 {
 		images = images[:200]
 	}
-	var text strings.Builder
+	results := make([]string, len(images))
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, 4)
 	for index, image := range images {
-		select {
-		case <-ctx.Done():
-			writeAPIError(w, http.StatusGatewayTimeout, "ocr_timeout", "PDF OCR timed out")
-			return
-		default:
-		}
-		ocr := exec.CommandContext(ctx, "tesseract", image, "stdout", "-l", "chi_sim+eng", "--psm", "6")
-		raw, err := ocr.Output()
-		if err != nil {
-			continue
-		}
-		body := strings.TrimSpace(string(raw))
+		wg.Add(1)
+		go func(index int, image string) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			ocr := exec.CommandContext(ctx, "tesseract", image, "stdout", "-l", "chi_sim+eng", "--psm", "6")
+			raw, err := ocr.Output()
+			if err == nil {
+				results[index] = strings.TrimSpace(string(raw))
+			}
+		}(index, image)
+	}
+	wg.Wait()
+	var text strings.Builder
+	for index, body := range results {
 		if body != "" {
 			fmt.Fprintf(&text, "\n--- 第 %d 页 ---\n%s", index+1, body)
 		}
