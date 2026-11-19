@@ -81,6 +81,10 @@ func (s *Server) runRelaySearchAgent(ctx context.Context, jobID string, p *relay
 			},
 		},
 	}
+	base = append([]map[string]any{{
+		"role":    "system",
+		"content": "联网调查模式：如果还需要继续搜索或浏览，请先在 content 里用一两句话向用户汇报当前进展，再发起工具调用；工具结果返回后继续调查，直到可以给出完整答案。不要为了展示工具而搜索。",
+	}}, base...)
 	body := chatBody(p, base, model, effort)
 	body["stream"] = false
 	body["tools"] = tools
@@ -139,10 +143,87 @@ func (s *Server) runRelaySearchAgent(ctx context.Context, jobID string, p *relay
 			"role": "tool", "tool_call_id": call.ID, "content": result,
 		})
 	}
+	if content != "" {
+		publishTextChunks(ctx, s, jobID, "delta", cleanDSMLText(content))
+	}
 	if instruction := s.citationInstruction(jobID); instruction != "" {
 		appendCitationInstruction(base, instruction)
 	}
 	return s.streamAgentAnswer(ctx, jobID, p, base, model, effort)
+}
+
+// runToolLoop alternates model turns and tool executions. The model may emit a
+// short interim answer alongside the next tool call; that text is published
+// before the tool card, then the loop continues.
+func (s *Server) runToolLoop(ctx context.Context, jobID string, p *relayProvider, messages []map[string]any, tools []map[string]any, model, effort string) bool {
+	seenCalls := make(map[string]bool)
+	for round := 0; round < 5; round++ {
+		body := chatBody(p, messages, model, effort)
+		body["stream"] = false
+		body["tools"] = tools
+		body["tool_choice"] = "auto"
+		resp, status, err := postChatJSON(ctx, p, body)
+		if err != nil || status < 200 || status >= 300 {
+			return false
+		}
+		choice := firstChoice(resp)
+		if choice == nil {
+			return false
+		}
+		calls := choice.ToolCalls
+		content := choice.Content
+		if len(calls) == 0 {
+			calls = parseDSMLCalls(content + "\n" + choice.Reasoning)
+			content = cleanDSMLText(content)
+		}
+		text := cleanDSMLText(content)
+		reasoning := cleanDSMLText(choice.Reasoning)
+		if reasoning != "" {
+			publishTextChunks(ctx, s, jobID, "reasoning", reasoning)
+		}
+		if text != "" {
+			publishTextChunks(ctx, s, jobID, "delta", text)
+		}
+		if len(calls) == 0 {
+			textNow := text
+			reasoningNow := reasoning
+			_ = s.updateRelayJob(jobID, "completed", &textNow, &reasoningNow, "")
+			s.relay.publish(jobID, relayEvent{Type: "status", Status: "completed"})
+			return true
+		}
+		repeat := true
+		for _, call := range calls {
+			sig := call.Function.Name + "\x00" + call.Function.Arguments
+			if !seenCalls[sig] {
+				repeat = false
+			}
+			seenCalls[sig] = true
+		}
+		if repeat {
+			// A provider (or a test double) repeating the same call cannot make
+			// progress; finish through the streaming path instead of looping.
+			return s.streamAgentAnswer(ctx, jobID, p, messages, model, effort)
+		}
+		assistant := map[string]any{"role": "assistant", "content": content}
+		payload := make([]map[string]any, 0, len(calls))
+		for _, call := range calls {
+			payload = append(payload, map[string]any{
+				"id": call.ID, "type": "function",
+				"function": map[string]any{"name": call.Function.Name, "arguments": call.Function.Arguments},
+			})
+		}
+		assistant["tool_calls"] = payload
+		messages = append(messages, assistant)
+		for _, call := range calls {
+			s.relay.publish(jobID, relayEvent{Type: "status", Status: "tools"})
+			result := s.executeToolCall(ctx, jobID, call.ID, call.Function.Name, call.Function.Arguments)
+			messages = append(messages, map[string]any{"role": "tool", "tool_call_id": call.ID, "content": result})
+		}
+		if instruction := s.citationInstruction(jobID); instruction != "" {
+			appendCitationInstruction(messages, instruction)
+		}
+	}
+	return false
 }
 
 // appendCitationInstruction attaches the citation rules to the last tool
