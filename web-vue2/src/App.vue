@@ -64,7 +64,7 @@
         </div>
       </header>
 
-      <section class="thread" ref="messages">
+      <section class="thread" ref="thread" @scroll="onThreadScroll">
         <div class="thread-inner">
           <template v-if="active">
             <MessageItem v-for="(m, index) in active.messages" :key="m.id" :message="m" :streaming="sending" :stream-phase="streamPhase" @retry="retry(m)" @edit="beginEdit" @rewind="rewind(index)" @stop="stopGeneration" />
@@ -190,7 +190,7 @@ export default {
       providerModal: false, providerDraft: null, providerBusy: false, providerError: '',
       providerModelsLoading: false, settingsOpen: false,
       fontScale: Number(localStorage.getItem('reinchat_font_scale') || 1),
-      pdfAttachment: null, pdfBusy: false, imageAttachments: [],
+      pdfAttachment: null, pdfBusy: false, imageAttachments: [], followBottom: true,
       convMenu: null, pinnedIds: JSON.parse(localStorage.getItem('reinchat_pins') || '[]'),
       selectionMode: false, selectedIds: [], renamingId: '', renameDraft: '',
     };
@@ -236,6 +236,7 @@ export default {
     this.applyTheme();
     this.applyFontScale();
     document.addEventListener('click', this.closeConvMenu);
+    document.addEventListener('paste', this.onGlobalPaste);
     window.addEventListener('popstate', this.openFromLocation);
     await this.waitForFonts();
     if (this.token) {
@@ -247,6 +248,10 @@ export default {
   beforeDestroy() {
     document.removeEventListener('click', this.closeConvMenu);
     window.removeEventListener('popstate', this.openFromLocation);
+    document.removeEventListener('paste', this.onGlobalPaste);
+  },
+  updated() {
+    if (this.followBottom) this.scrollThreadToBottom();
   },
   methods: {
     async login(payload) {
@@ -310,11 +315,21 @@ export default {
       }
       try {
         const data = await this.api.conversation(id);
+        await this.hydrateImages(data);
         this.$set(this.conversationCache, id, data);
         this.active = data;
         this.applySettings(data);
         this.setConversationUrl(id);
       } catch (e) { this.authError = e.message; }
+    },
+    async hydrateImages(conversation) {
+      for (const message of conversation.messages || []) {
+        for (const image of message.images || []) {
+          if (!image.url && image.id) {
+            try { const url = await this.api.fileUrl(image.id); if (url) this.$set(image, 'url', url); } catch (e) { /* ignore */ }
+          }
+        }
+      }
     },
     openConvMenu(conversation, event) {
       if (this.selectionMode) return;
@@ -522,6 +537,22 @@ export default {
       } catch (e) { this.authError = '图片上传失败：' + e.message; return; }
       this.sendText(text || (pdf ? '请阅读并分析这份 PDF。' : '请分析这张图片。'), false, pdf, images);
     },
+    onThreadScroll() {
+      const el = this.$refs.thread;
+      if (!el) return;
+      this.followBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+    },
+    scrollThreadToBottom() {
+      this.$nextTick(() => {
+        const el = this.$refs.thread;
+        if (el) el.scrollTop = el.scrollHeight;
+      });
+    },
+    onGlobalPaste(event) {
+      if (event.target && event.target.closest && event.target.closest('.composer')) return;
+      const files = event.clipboardData ? Array.from(event.clipboardData.files || []) : [];
+      if (files.length) { event.preventDefault(); this.handlePastedFiles(files); }
+    },
     async handlePastedFiles(files) {
       for (const file of files) {
         if (file.type === 'application/pdf' || /\.pdf$/i.test(file.name)) await this.attachPdf(file);
@@ -550,6 +581,8 @@ export default {
       if (!retry) conversation.messages.push({ id: uuid(), role: 'user', content: text, pdfName: pdf ? pdf.name : '', pdfText: pdf ? pdf.text : '', images: images || [], createdAt: now, status: 'COMPLETE', error: null });
       const assistant = { id: uuid(), role: 'assistant', content: '', reasoning: '', segments: [], model: this.model, toolCalls: [], images: [], createdAt: now + 1, status: 'COMPLETE', error: null, streaming: true };
       conversation.messages.push(assistant);
+      this.followBottom = true;
+      this.scrollThreadToBottom();
       const controller = new AbortController();
       this.$set(this.streams, conversation.id, { assistantId: assistant.id, phase: 'waiting', controller, cancelled: false });
       const stream = this.streams[conversation.id];
@@ -721,6 +754,17 @@ export default {
         c.version = saved.version;
         c.createdAt = saved.createdAt;
         c.updatedAt = saved.updatedAt;
+        const localById = {};
+        (c.messages || []).forEach((m) => { localById[m.id] = m; });
+        (saved.messages || []).forEach((m) => {
+          const local = localById[m.id];
+          if (local && local.images) {
+            m.images = (m.images || []).map((img) => {
+              const old = local.images.find((x) => x.id === img.id && x.url);
+              return old ? { ...img, url: old.url } : img;
+            });
+          }
+        });
         this.$set(this.conversationCache, saved.id, saved);
         if (this.activeId === saved.id) { this.active = saved; this.setConversationUrl(saved.id); }
         await this.refresh();

@@ -55,6 +55,11 @@ export class Api {
     if (!res.ok) throw new Error((data.error && data.error.message) || ('上传失败 HTTP ' + res.status));
     return data;
   }
+  async fileUrl(id) {
+    const res = await fetch(this.base() + '/v1/files/' + encodeURIComponent(id), { headers: { Authorization: 'Bearer ' + this.token } });
+    if (!res.ok) return '';
+    return URL.createObjectURL(await res.blob());
+  }
   deleteConversation(id) {
     return this.request('/v1/conversations/' + encodeURIComponent(id), { method: 'DELETE' });
   }

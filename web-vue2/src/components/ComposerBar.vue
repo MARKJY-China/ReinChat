@@ -48,10 +48,18 @@ export default {
   beforeDestroy() { document.removeEventListener('click', this.closeDropdown); },
   methods: {
     onPaste(event) {
-      const files = event.clipboardData && event.clipboardData.files;
-      if (!files || !files.length) return;
+      const clipboard = event.clipboardData;
+      if (!clipboard) return;
+      const files = Array.from(clipboard.files || []);
+      for (const item of Array.from(clipboard.items || [])) {
+        if (item.kind === 'file') {
+          const file = item.getAsFile();
+          if (file && !files.some((f) => f.name === file.name && f.size === file.size)) files.push(file);
+        }
+      }
+      if (!files.length) return;
       event.preventDefault();
-      this.$emit('paste-files', Array.from(files));
+      this.$emit('paste-files', files);
     },
     toggleDropdown(key) { this.openDropdown = this.openDropdown === key ? '' : key; },
     closeDropdown() { this.openDropdown = ''; },
