@@ -615,6 +615,9 @@ export default {
           if (!data) continue;
           const event = JSON.parse(data);
           if (event.type === 'snapshot') {
+            if (Array.isArray(event.tools)) {
+              event.tools.forEach((tool) => this.upsertTool(assistant, tool.tool || '', tool.status || 'running', tool.detail));
+            }
             if (event.text) { assistant.content = event.text; stream.phase = 'streaming'; }
             if (event.reasoning && (!assistant.segments || !assistant.segments.length)) this.appendReasoning(assistant, event.reasoning);
             if (event.error) throw new Error(String(event.error).slice(0, 4000));

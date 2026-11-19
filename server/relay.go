@@ -37,25 +37,28 @@ type RelayCreateRequest struct {
 }
 
 type relayEvent struct {
-	Type      string `json:"type"`
-	Text      string `json:"text,omitempty"`
-	Reasoning string `json:"reasoning,omitempty"`
-	Status    string `json:"status,omitempty"`
-	Error     string `json:"error,omitempty"`
-	Tool      string `json:"tool,omitempty"`
-	Detail    string `json:"detail,omitempty"`
+	Type      string       `json:"type"`
+	Text      string       `json:"text,omitempty"`
+	Reasoning string       `json:"reasoning,omitempty"`
+	Status    string       `json:"status,omitempty"`
+	Error     string       `json:"error,omitempty"`
+	Tool      string       `json:"tool,omitempty"`
+	Detail    string       `json:"detail,omitempty"`
+	Tools     []relayEvent `json:"tools,omitempty"`
 }
 
 type relayHub struct {
 	mu      sync.Mutex
 	subs    map[string]map[chan relayEvent]struct{}
 	cancels map[string]context.CancelFunc
+	tools   map[string][]relayEvent
 }
 
 func newRelayHub() *relayHub {
 	return &relayHub{
 		subs:    make(map[string]map[chan relayEvent]struct{}),
 		cancels: make(map[string]context.CancelFunc),
+		tools:   make(map[string][]relayEvent),
 	}
 }
 
@@ -85,6 +88,9 @@ func (h *relayHub) subscribe(jobID string) (<-chan relayEvent, func()) {
 func (h *relayHub) publish(jobID string, event relayEvent) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if event.Type == "tool" {
+		h.tools[jobID] = append(h.tools[jobID], event)
+	}
 	for ch := range h.subs[jobID] {
 		select {
 		case ch <- event:
@@ -112,7 +118,14 @@ func (h *relayHub) cancel(jobID string) bool {
 func (h *relayHub) removeCancel(jobID string) {
 	h.mu.Lock()
 	delete(h.cancels, jobID)
+	delete(h.tools, jobID)
 	h.mu.Unlock()
+}
+
+func (h *relayHub) toolHistory(jobID string) []relayEvent {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return append([]relayEvent(nil), h.tools[jobID]...)
 }
 
 type RelayProviderDTO struct {
@@ -305,6 +318,7 @@ func (s *Server) handleRelayEvents(w http.ResponseWriter, r *http.Request, user 
 	w.WriteHeader(http.StatusOK)
 	snapshot, _ := json.Marshal(relayEvent{
 		Type: "snapshot", Text: job.Text, Reasoning: job.Reasoning, Status: job.Status, Error: job.Error,
+		Tools: s.relay.toolHistory(jobID),
 	})
 	_, _ = fmt.Fprintf(w, "event: snapshot\ndata: %s\n\n", snapshot)
 	flusher.Flush()

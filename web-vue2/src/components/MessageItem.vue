@@ -57,7 +57,10 @@ export default {
     },
   },
   methods: {
-    isOpen(index) { return this.openState[index] !== false; },
+    isOpen(index) {
+      if (Object.prototype.hasOwnProperty.call(this.openState, index)) return this.openState[index];
+      return !!this.message.streaming;
+    },
     toggle(index) { this.$set(this.openState, index, !this.isOpen(index)); },
     formatTime(ms) {
       if (!ms) return '';
