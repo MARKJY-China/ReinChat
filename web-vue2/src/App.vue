@@ -13,13 +13,31 @@
       </div>
       <div class="rail-label">会话</div>
       <nav class="rail-list">
-        <button v-for="c in conversations" :key="c.id" class="rail-item" :class="{ active: c.id === activeId }" @click="openConversation(c.id)">
-          <span class="rail-item-mark">{{ (c.title || '新').slice(0, 1) }}</span>
-          <span class="rail-item-title">{{ c.title || '新会话' }}</span>
-          <span class="rail-item-time">{{ formatShort(c.updatedAt) }}</span>
-        </button>
+        <div v-for="c in sortedConversations" :key="c.id" class="rail-row" :class="{ active: c.id === activeId, selected: selectedIds.includes(c.id) }">
+          <span v-if="selectionMode" class="rail-check" :class="{ on: selectedIds.includes(c.id) }" @click.stop="toggleSelected(c.id)">✓</span>
+          <button class="rail-item" @click="selectionMode ? toggleSelected(c.id) : openConversation(c.id)" @contextmenu.prevent="openConvMenu(c, $event)">
+            <span class="rail-item-mark">{{ (c.title || '新').slice(0, 1) }}</span>
+            <input v-if="renamingId === c.id" ref="renameInput" class="rename-input" v-model="renameDraft" @click.stop @keyup.enter="commitRename(c)" @keyup.esc="renamingId = ''" @blur="commitRename(c)">
+            <span v-else class="rail-item-title">{{ c.title || '新会话' }}</span>
+            <span class="rail-item-time">{{ formatShort(c.updatedAt) }}</span>
+          </button>
+          <button v-if="!selectionMode" class="rail-more" title="会话操作" @click.stop="openConvMenu(c, $event)">···</button>
+          <span v-if="pinnedIds.includes(c.id)" class="pin-mark">置顶</span>
+        </div>
         <p class="rail-empty" v-if="!conversations.length">还没有会话</p>
       </nav>
+      <div v-if="selectionMode" class="select-bar">
+        <span>已选 {{ selectedIds.length }}</span>
+        <button class="quiet-btn small" @click="selectionMode = false; selectedIds = []">取消</button>
+        <button class="quiet-btn small danger" :disabled="!selectedIds.length" @click="deleteSelected">删除</button>
+      </div>
+      <div v-if="convMenu" class="conv-menu" :style="{ top: convMenu.y + 'px', left: convMenu.x + 'px' }" @click.stop>
+        <button @click="startRename(convMenu.conversation)">重命名</button>
+        <button @click="togglePin(convMenu.conversation)">{{ pinnedIds.includes(convMenu.conversation.id) ? '取消置顶' : '置顶' }}</button>
+        <button @click="shareConversation(convMenu.conversation)">分享</button>
+        <button @click="startSelection(convMenu.conversation)">多选</button>
+        <button class="danger" @click="deleteConversation(convMenu.conversation)">删除</button>
+      </div>
       <div class="rail-bottom">
         <button class="user-row" @click="userMenu = !userMenu">
           <span class="avatar">{{ user.slice(0, 1).toUpperCase() }}</span>
@@ -169,6 +187,8 @@ export default {
       providerModal: false, providerDraft: null, providerBusy: false, providerError: '',
       providerModelsLoading: false, settingsOpen: false,
       fontScale: Number(localStorage.getItem('reinchat_font_scale') || 1),
+      convMenu: null, pinnedIds: JSON.parse(localStorage.getItem('reinchat_pins') || '[]'),
+      selectionMode: false, selectedIds: [], renamingId: '', renameDraft: '',
     };
   },
   computed: {
@@ -176,6 +196,13 @@ export default {
     sending() { return !!(this.activeId && this.streams[this.activeId]); },
     streamPhase() { return (this.activeId && this.streams[this.activeId] && this.streams[this.activeId].phase) || ''; },
     providerOptions() { return this.providers.map((p) => ({ value: p.id, label: p.name })); },
+    sortedConversations() {
+      return [...this.conversations].sort((a, b) => {
+        const ap = this.pinnedIds.includes(a.id), bp = this.pinnedIds.includes(b.id);
+        if (ap !== bp) return ap ? -1 : 1;
+        return (b.updatedAt || 0) - (a.updatedAt || 0);
+      });
+    },
     modelOptions() {
       const provider = this.providers.find((p) => p.id === this.providerId);
       if (provider && provider.models && provider.models.length) {
@@ -203,10 +230,16 @@ export default {
   async mounted() {
     this.applyTheme();
     this.applyFontScale();
+    document.addEventListener('click', this.closeConvMenu);
     await this.waitForFonts();
-    if (this.token) await this.refresh();
+    if (this.token) {
+      await this.refresh();
+      const match = window.location.hash.match(/conversation=([^&]+)/);
+      if (match) this.openConversation(decodeURIComponent(match[1]));
+    }
     this.booting = false;
   },
+  beforeDestroy() { document.removeEventListener('click', this.closeConvMenu); },
   methods: {
     async login(payload) {
       this.busy = true; this.authError = '';
@@ -245,6 +278,78 @@ export default {
         this.$set(this.conversationCache, id, data);
         this.active = data;
         this.applySettings(data);
+      } catch (e) { this.authError = e.message; }
+    },
+    openConvMenu(conversation, event) {
+      if (this.selectionMode) return;
+      const width = 150, height = 190;
+      const x = Math.min(event.clientX, window.innerWidth - width - 10);
+      const y = Math.min(event.clientY, window.innerHeight - height - 10);
+      this.convMenu = { conversation, x: Math.max(8, x), y: Math.max(8, y) };
+    },
+    closeConvMenu() { this.convMenu = null; },
+    startRename(conversation) {
+      this.renamingId = conversation.id;
+      this.renameDraft = conversation.title === '新会话' ? '' : conversation.title;
+      this.convMenu = null;
+      this.$nextTick(() => {
+        const input = this.$refs.renameInput;
+        const el = Array.isArray(input) ? input[0] : input;
+        if (el) { el.focus(); el.select(); }
+      });
+    },
+    async commitRename(conversation) {
+      if (this.renamingId !== conversation.id) return;
+      const title = (this.renameDraft || '').trim();
+      this.renamingId = '';
+      if (!title || title === conversation.title) return;
+      try {
+        const saved = await this.api.renameConversation(conversation.id, title);
+        const item = this.conversations.find((c) => c.id === saved.id);
+        if (item) item.title = saved.title;
+        if (this.activeId === saved.id && this.active) this.active.title = saved.title;
+      } catch (e) { this.authError = e.message; }
+    },
+    togglePin(conversation) {
+      if (this.pinnedIds.includes(conversation.id)) this.pinnedIds = this.pinnedIds.filter((id) => id !== conversation.id);
+      else this.pinnedIds = [conversation.id, ...this.pinnedIds];
+      localStorage.setItem('reinchat_pins', JSON.stringify(this.pinnedIds));
+      this.convMenu = null;
+    },
+    async shareConversation(conversation) {
+      this.convMenu = null;
+      const url = this.server.replace(/\/+$/, '') + '/v2/#conversation=' + encodeURIComponent(conversation.id);
+      if (navigator.share) {
+        try { await navigator.share({ title: conversation.title || 'ReinChat', text: conversation.title || 'ReinChat 会话', url }); return; } catch (e) { /* fall through */ }
+      }
+      try { await navigator.clipboard.writeText(url); } catch (e) { /* ignore */ }
+    },
+    startSelection(conversation) {
+      this.selectionMode = true;
+      this.selectedIds = conversation ? [conversation.id] : [];
+      this.convMenu = null;
+    },
+    toggleSelected(id) {
+      this.selectedIds = this.selectedIds.includes(id)
+        ? this.selectedIds.filter((v) => v !== id)
+        : [...this.selectedIds, id];
+    },
+    async deleteConversation(conversation) {
+      this.convMenu = null;
+      if (!window.confirm('删除会话「' + (conversation.title || '新会话') + '」？此操作不可恢复。')) return;
+      try {
+        await this.api.deleteConversation(conversation.id);
+        this.conversations = this.conversations.filter((c) => c.id !== conversation.id);
+        if (this.activeId === conversation.id) { this.active = null; this.activeId = ''; }
+      } catch (e) { this.authError = e.message; }
+    },
+    async deleteSelected() {
+      if (!this.selectedIds.length || !window.confirm('删除选中的 ' + this.selectedIds.length + ' 个会话？')) return;
+      try {
+        await Promise.all(this.selectedIds.map((id) => this.api.deleteConversation(id)));
+        this.conversations = this.conversations.filter((c) => !this.selectedIds.includes(c.id));
+        if (this.selectedIds.includes(this.activeId)) { this.active = null; this.activeId = ''; }
+        this.selectedIds = []; this.selectionMode = false;
       } catch (e) { this.authError = e.message; }
     },
     setProvider(id) {

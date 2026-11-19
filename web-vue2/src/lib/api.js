@@ -45,4 +45,18 @@ export class Api {
   updateConversation(id, body) {
     return this.request('/v1/conversations/' + encodeURIComponent(id), { method: 'PUT', body });
   }
+  deleteConversation(id) {
+    return this.request('/v1/conversations/' + encodeURIComponent(id), { method: 'DELETE' });
+  }
+  async renameConversation(id, title) {
+    const conversation = await this.conversation(id);
+    return this.updateConversation(id, {
+      title,
+      createdAt: conversation.createdAt,
+      updatedAt: Date.now(),
+      messages: conversation.messages || [],
+      settings: conversation.settings || {},
+      baseVersion: conversation.version,
+    });
+  }
 }
