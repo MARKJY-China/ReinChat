@@ -603,6 +603,9 @@ export default {
         const saved = !c.version
           ? await this.api.createConversation({ id: c.id, ...body })
           : await this.api.updateConversation(c.id, { ...body, baseVersion: c.version });
+        c.version = saved.version;
+        c.createdAt = saved.createdAt;
+        c.updatedAt = saved.updatedAt;
         this.$set(this.conversationCache, saved.id, saved);
         if (this.activeId === saved.id) this.active = saved;
         await this.refresh();
