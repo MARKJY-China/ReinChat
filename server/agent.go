@@ -84,10 +84,9 @@ func (s *Server) runRelaySearchAgent(ctx context.Context, jobID string, p *relay
 	body := chatBody(p, base, model, effort)
 	body["stream"] = false
 	body["tools"] = tools
-	body["tool_choice"] = map[string]any{
-		"type":     "function",
-		"function": map[string]any{"name": "web_search"},
-	}
+	// Let the model decide. The 联网 toggle is an affordance, not a mandate:
+	// searching on every turn turns a tool into a hard-coded pipeline step.
+	body["tool_choice"] = "auto"
 	resp, status, err := postChatJSON(ctx, p, body)
 	if err != nil || status < 200 || status >= 300 {
 		return false
