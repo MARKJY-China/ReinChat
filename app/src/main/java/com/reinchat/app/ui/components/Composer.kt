@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -33,10 +34,14 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.AddPhotoAlternate
 import androidx.compose.material.icons.rounded.ArrowUpward
+import androidx.compose.material.icons.rounded.AttachFile
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.ContentPaste
+import androidx.compose.material.icons.rounded.PhotoCamera
+import androidx.compose.material.icons.rounded.PhotoLibrary
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material.icons.rounded.Language
@@ -100,6 +105,8 @@ fun Composer(
     canSend: Boolean,
     onDraftChange: (String) -> Unit,
     onAddImage: () -> Unit,
+    onTakePhoto: () -> Unit,
+    onAddFile: () -> Unit,
     onAttachPdf: () -> Unit,
     onPaste: () -> Unit,
     onRemovePdf: () -> Unit,
@@ -113,6 +120,7 @@ fun Composer(
     modifier: Modifier = Modifier,
 ) {
     var focused by remember { mutableStateOf(false) }
+    var attachmentsMenuOpen by remember { mutableStateOf(false) }
     val borderColor by animateColorAsState(
         targetValue = if (focused) ReinColors.HairlineStrong else ReinColors.Hairline,
         animationSpec = tween(180, easing = LiquidEase),
@@ -278,25 +286,6 @@ fun Composer(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.Bottom,
         ) {
-            ComposerActionButton(
-                icon = Icons.Rounded.AddPhotoAlternate,
-                contentDescription = "添加图片",
-                enabled = !importingImage && !pdfBusy,
-                onClick = onAddImage,
-            )
-            ComposerActionButton(
-                icon = Icons.Rounded.PictureAsPdf,
-                contentDescription = "附加 PDF",
-                enabled = !pdfBusy && !isStreaming,
-                onClick = onAttachPdf,
-            )
-            ComposerActionButton(
-                icon = Icons.Rounded.ContentPaste,
-                contentDescription = "从剪贴板粘贴图片或 PDF",
-                enabled = !isStreaming,
-                onClick = onPaste,
-            )
-
             Box(
                 modifier = Modifier
                     .weight(1f)
@@ -339,13 +328,52 @@ fun Composer(
                 )
             }
 
-            Spacer(Modifier.width(5.dp))
+            Spacer(Modifier.width(3.dp))
+            ComposerActionButton(
+                icon = if (attachmentsMenuOpen) Icons.Rounded.Close else Icons.Rounded.Add,
+                contentDescription = if (attachmentsMenuOpen) "收起附件菜单" else "添加附件",
+                enabled = !isStreaming,
+                onClick = { attachmentsMenuOpen = !attachmentsMenuOpen },
+            )
+            Spacer(Modifier.width(3.dp))
             SendButton(
                 isStreaming = isStreaming,
                 enabled = canSend,
                 onSend = onSend,
                 onStop = onStop,
             )
+        }
+
+        AnimatedVisibility(
+            visible = attachmentsMenuOpen,
+            enter = fadeIn(tween(140)) + expandVertically(tween(200, easing = LiquidEaseOutSoft)),
+            exit = fadeOut(tween(90)) + shrinkVertically(tween(150)),
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 9.dp, start = 3.dp, end = 3.dp),
+                horizontalArrangement = Arrangement.spacedBy(7.dp),
+            ) {
+                AttachmentMenuCard(
+                    label = "拍照",
+                    icon = Icons.Rounded.PhotoCamera,
+                    modifier = Modifier.weight(1f),
+                    onClick = { attachmentsMenuOpen = false; onTakePhoto() },
+                )
+                AttachmentMenuCard(
+                    label = "相册",
+                    icon = Icons.Rounded.PhotoLibrary,
+                    modifier = Modifier.weight(1f),
+                    onClick = { attachmentsMenuOpen = false; onAddImage() },
+                )
+                AttachmentMenuCard(
+                    label = "文件",
+                    icon = Icons.Rounded.AttachFile,
+                    modifier = Modifier.weight(1f),
+                    onClick = { attachmentsMenuOpen = false; onAddFile() },
+                )
+            }
         }
 
         Row(
@@ -376,6 +404,42 @@ fun Composer(
                 color = ReinColors.TextTertiary,
             )
         }
+    }
+}
+
+@Composable
+private fun AttachmentMenuCard(
+    label: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
+    val shape = RoundedCornerShape(10.dp)
+    Column(
+        modifier = modifier
+            .clip(shape)
+            .background(ReinColors.DeepElevated)
+            .border(1.dp, ReinColors.Hairline, shape)
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = onClick,
+            )
+            .padding(vertical = 10.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = label,
+            tint = ReinColors.TextPrimary,
+            modifier = Modifier.size(19.dp),
+        )
+        Spacer(Modifier.height(5.dp))
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelMedium.copy(fontSize = 11.sp),
+            color = ReinColors.TextSecondary,
+        )
     }
 }
 

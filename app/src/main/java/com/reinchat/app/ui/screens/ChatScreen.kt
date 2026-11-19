@@ -197,6 +197,17 @@ fun ChatScreen(
     val pdfPicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
     ) { uri -> uri?.let(onAttachPdf) }
+    val cameraPicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.TakePicturePreview()
+    ) { bitmap ->
+        if (bitmap != null) {
+            runCatching {
+                val file = java.io.File(context.cacheDir, "camera-${System.currentTimeMillis()}.jpg")
+                java.io.FileOutputStream(file).use { out -> bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 90, out) }
+                onAddImages(listOf(android.net.Uri.fromFile(file)))
+            }
+        }
+    }
 
     // Compose exposes no file-URI paste callback, so read the platform clip
     // directly: first the item URIs, then any content:// or file:// URLs that
@@ -467,6 +478,8 @@ fun ChatScreen(
                             PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
                         )
                     },
+                    onTakePhoto = { cameraPicker.launch(null) },
+                    onAddFile = { pdfPicker.launch(arrayOf("application/pdf")) },
                     onAttachPdf = {
                         onClearPdfError()
                         pdfPicker.launch(arrayOf("application/pdf"))
