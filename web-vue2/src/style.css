@@ -385,3 +385,5 @@ html.dark .rail-list:hover::-webkit-scrollbar-thumb { background: rgba(235,231,2
 .lightbox-count { position: absolute; bottom: 18px; left: 50%; transform: translateX(-50%); color: rgba(255,255,255,.55); font-size: 11px; letter-spacing: .08em; }
 .lightbox-enter-active, .lightbox-leave-active { transition: opacity .18s ease; }
 .lightbox-enter, .lightbox-leave-to { opacity: 0; }
+.turn.user .message-images { justify-content: flex-end; margin-left: auto; max-width: 88%; }
+.turn.user .message-pdf { margin-left: auto; }
