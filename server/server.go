@@ -43,6 +43,7 @@ type Config struct {
 	Logger         *log.Logger
 	Now            func() time.Time
 	AdminToken     string
+	DSHGatewayURL  string
 }
 
 type Server struct {
@@ -200,6 +201,9 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request) {
 		return
 	case "/api/v1/relay/providers":
 		s.handleRelayProviders(w, r)
+		return
+	case "/api/v1/agent/run":
+		s.handleAgentRun(w, r)
 		return
 	case "/api/v1/auth/register":
 		if r.Method != http.MethodPost {
