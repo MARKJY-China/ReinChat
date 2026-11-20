@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "node --test test/markdown.test.mjs"
+    "test": "node --test test/*.test.mjs"
   },
   "dependencies": {
     "pdfjs-dist": "^4.8.69",

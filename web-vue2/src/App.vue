@@ -166,6 +166,7 @@ import ComposerBar from './components/ComposerBar.vue';
 import { Api } from './lib/api';
 import { uuid } from './lib/markdown';
 import { extractPdfText } from './lib/pdf';
+import { appendText } from './lib/timeline';
 
 const TOKEN = 'reinchat_vue2_token';
 const USER = 'reinchat_vue2_user';
@@ -663,7 +664,7 @@ export default {
       this.$set(this.conversationCache, conversation.id, conversation);
       const now = Date.now();
       if (!retry) conversation.messages.push({ id: uuid(), role: 'user', content: text, pdfName: pdf ? pdf.name : '', pdfText: pdf ? pdf.text : '', images: images || [], createdAt: now, status: 'COMPLETE', error: null });
-      const assistant = { id: uuid(), role: 'assistant', content: '', reasoning: '', segments: [], timeline: [], sources: [], model: this.model, toolCalls: [], images: [], createdAt: now + 1, status: 'COMPLETE', error: null, streaming: true };
+      const assistant = { id: uuid(), role: 'assistant', content: '', reasoning: '', segments: [], sources: [], model: this.model, toolCalls: [], images: [], createdAt: now + 1, status: 'COMPLETE', error: null, streaming: true };
       conversation.messages.push(assistant);
       this.followBottom = true;
       this.scrollThreadToBottom();
@@ -729,11 +730,6 @@ export default {
         segments.push({ type: 'reasoning', text, status: 'done', startedAt: Date.now() });
       }
       this.$set(assistant, 'segments', segments);
-      const timeline = (assistant.timeline || []).slice();
-      const lastTimeline = timeline[timeline.length - 1];
-      if (lastTimeline && lastTimeline.type === 'reasoning') lastTimeline.text = (lastTimeline.text || '') + text;
-      else timeline.push({ type: 'reasoning', text, startedAt: Date.now() });
-      this.$set(assistant, 'timeline', timeline);
       assistant.reasoning = (assistant.reasoning || '') + text;
       if (this.followBottom) this.scrollThreadToBottom();
     },
@@ -781,11 +777,6 @@ export default {
         segments[index] = segment;
       }
       this.$set(assistant, 'segments', segments);
-      const timeline = (assistant.timeline || []).slice();
-      const existingTimeline = callId ? timeline.find((item) => item.type === 'tool' && item.callId === callId) : null;
-      if (existingTimeline) Object.assign(existingTimeline, { label, status, summary: event.summary || existingTimeline.summary || '', detail: (event.detail ? String(event.detail).slice(0, 4000) : existingTimeline.detail) || '' });
-      else timeline.push(segments[segments.length - 1]);
-      this.$set(assistant, 'timeline', timeline);
       if (this.followBottom) this.scrollThreadToBottom();
     },
     finalizeTools(assistant, failed) {
@@ -881,7 +872,14 @@ export default {
                 this.appendReasoning(assistant, event.reasoning);
               }
             }
-            if (event.text) { assistant.content = event.text; stream.phase = 'streaming'; }
+            if (event.text) {
+              assistant.content = event.text;
+              const hasTextBlock = (assistant.segments || []).some((segment) => segment.type === 'text');
+              if (!hasTextBlock) {
+                this.$set(assistant, 'segments', appendText(assistant.segments || [], event.text));
+              }
+              stream.phase = 'streaming';
+            }
             this.mergeSources(assistant, event.sources);
             if (event.status === 'failed') throw new Error(String(event.error || '生成失败').slice(0, 4000));
             if (event.status === 'cancelled') throw new Error('生成已取消');
@@ -895,11 +893,7 @@ export default {
             }
             const delta = event.text || '';
             assistant.content += delta;
-            const timeline = (assistant.timeline || []).slice();
-            const lastTimeline = timeline[timeline.length - 1];
-            if (lastTimeline && lastTimeline.type === 'text') lastTimeline.text = (lastTimeline.text || '') + delta;
-            else timeline.push({ type: 'text', text: delta });
-            this.$set(assistant, 'timeline', timeline);
+            this.$set(assistant, 'segments', appendText(assistant.segments || [], delta));
             stream.phase = 'streaming';
           }
           if (event.type === 'reasoning') { this.appendReasoning(assistant, event.text || ''); stream.phase = 'streaming'; }
