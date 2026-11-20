@@ -72,3 +72,6 @@ agent-gateway/.dsh-home/
 # Vue2 SFC frontend build output
 web-vue2/node_modules/
 web-vue2/dist/
+
+# Local font source (copied into web-vue2/src/assets/fonts)
+/HarmonyOS_Sans_SC_Regular.ttf
