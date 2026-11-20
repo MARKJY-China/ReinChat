@@ -855,6 +855,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     when (event) {
                         is StreamEvent.Delta -> {
                             received.append(event.text)
+                            timeline.appendText(event.text)
                             markStreamingPhase()
                         }
                         is StreamEvent.Reasoning -> {
@@ -878,6 +879,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                             }
                             if (received.isEmpty() && event.text.isNotEmpty()) {
                                 received.append(event.text)
+                                timeline.appendText(event.text)
                             }
                             if (receivedReasoning.isEmpty() && event.reasoning.isNotEmpty()) {
                                 receivedReasoning.append(event.reasoning)

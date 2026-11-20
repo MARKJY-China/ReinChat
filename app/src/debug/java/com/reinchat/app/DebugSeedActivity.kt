@@ -149,6 +149,7 @@ class DebugSeedActivity : ComponentActivity() {
                             detail = "液态玻璃设计原则\n1. 透：保留底层色彩\n2. 折：高光与内阴影\n3. 动：连续的空间过渡",
                             label = "搜索网页",
                         ),
+                        MessageSegment.text("\u5148\u7ed9\u4e2a\u521d\u6b65\u7ed3\u8bba\uff1a\u900f\u3001\u6298\u3001\u52a8\u4e09\u5c42\u3002\u8fd8\u5dee\u4e00\u4e2a\u6848\u4f8b\uff0c\u7ee7\u7eed\u67e5\u3002"),
                         MessageSegment.reasoning("搜索结果确认了这三层，再找一个具体案例验证。"),
                         MessageSegment.tool(
                             name = "fetch_url",
@@ -159,6 +160,7 @@ class DebugSeedActivity : ComponentActivity() {
                         MessageSegment.reasoning(
                             "网页打不开，回到 PDF 和搜索结果，按「透、折、动」三个层次组织回答。"
                         ),
+                        MessageSegment.text("\u4ee5\u4e0a\u662f\u6700\u7ec8\u56de\u7b54\uff1a\u6db2\u6001\u73bb\u7483\u7531\u900f\u3001\u6298\u3001\u52a8\u4e09\u5c42\u6784\u6210\u3002"),
                     ),                    createdAt = now + 1_000,
                 ),
             ),

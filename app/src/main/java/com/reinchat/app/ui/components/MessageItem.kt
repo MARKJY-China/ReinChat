@@ -37,6 +37,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.ErrorOutline
@@ -71,6 +72,7 @@ import coil.compose.AsyncImage
 import com.reinchat.app.data.ChatImage
 import com.reinchat.app.data.ChatMessage
 import com.reinchat.app.data.MessageRole
+import com.reinchat.app.data.ProcessTimeline
 import com.reinchat.app.data.MessageSegment
 import com.reinchat.app.data.MessageStatus
 import com.reinchat.app.data.PROCESS_LABEL_THINKING_ACTIVE
@@ -316,6 +318,14 @@ private fun AssistantMessage(
 ) {
     val hasContent = message.content.isNotBlank()
     val segments = message.segments
+    val (workSegments, trailingText) = ProcessTimeline.splitAnswer(segments)
+    val hasWorkSteps = segments.any { it.type != MessageSegment.TYPE_TEXT }
+    val hasInlineText = segments.any { it.type == MessageSegment.TYPE_TEXT }
+    // When work history is folded away the answer must come only from the trailing
+    // text, otherwise interim reports would be duplicated at the bottom.
+    val showWorkBlock = !isStreaming && workSegments.isNotEmpty() && hasWorkSteps
+    val finalText = ProcessTimeline.answerText(segments, message.content)
+    val showPlainContent = hasContent && !(showWorkBlock && trailingText.isNotBlank())
 
     Column(modifier = Modifier.fillMaxWidth()) {
         Row(
@@ -361,14 +371,17 @@ private fun AssistantMessage(
             )
         }
 
-        if (segments.isNotEmpty()) {
+        if (showWorkBlock) {
+            CompletedWorkBlock(messageId = message.id, segments = workSegments)
+            if (finalText.isNotBlank()) Spacer(Modifier.height(10.dp))
+        } else if (segments.isNotEmpty()) {
             SegmentTimeline(
                 messageId = message.id,
                 segments = segments,
                 isStreaming = isStreaming,
                 hasContent = hasContent,
             )
-            if (hasContent || isStreaming) Spacer(Modifier.height(10.dp))
+            if ((hasContent && !hasInlineText) || isStreaming) Spacer(Modifier.height(10.dp))
         } else if (message.reasoning.isNotBlank()) {
             // Old conversations only stored the concatenated reasoning text.
             ThinkingBlock(
@@ -379,35 +392,54 @@ private fun AssistantMessage(
             if (hasContent) Spacer(Modifier.height(10.dp))
         }
 
-        when {
-            hasContent -> {
+        if (showWorkBlock) {
+            if (finalText.isNotBlank()) {
                 MarkdownText(
-                    markdown = message.content,
+                    markdown = finalText,
                     modifier = Modifier.fillMaxWidth(),
-                    streaming = isStreaming,
+                    streaming = false,
                     color = ReinColors.TextPrimary.copy(alpha = 0.94f),
                 )
-                if (message.status == MessageStatus.ERROR) {
-                    ErrorNotice(
-                        message = message.error ?: "生成中断",
-                        modifier = Modifier.padding(top = 10.dp),
+            }
+            if (message.status == MessageStatus.ERROR) {
+                ErrorNotice(
+                    message = message.error ?: "生成中断",
+                    modifier = Modifier.padding(top = 10.dp),
+                )
+            }
+        } else {
+            when {
+                hasContent && !hasInlineText -> {
+                    MarkdownText(
+                        markdown = message.content,
+                        modifier = Modifier.fillMaxWidth(),
+                        streaming = isStreaming,
+                        color = ReinColors.TextPrimary.copy(alpha = 0.94f),
+                    )
+                    if (message.status == MessageStatus.ERROR) {
+                        ErrorNotice(
+                            message = message.error ?: "生成中断",
+                            modifier = Modifier.padding(top = 10.dp),
+                        )
+                    }
+                }
+
+                hasInlineText -> Unit
+
+                // The phase line below already tells the user what is happening.
+                isStreaming -> Unit
+
+                message.status == MessageStatus.ERROR -> {
+                    ErrorNotice(message = message.error ?: "生成失败，请稍后重试")
+                }
+
+                else -> {
+                    Text(
+                        text = "未生成正文",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = ReinColors.TextTertiary,
                     )
                 }
-            }
-
-            // The phase line below already tells the user what is happening.
-            isStreaming -> Unit
-
-            message.status == MessageStatus.ERROR -> {
-                ErrorNotice(message = message.error ?: "生成失败，请稍后重试")
-            }
-
-            else -> {
-                Text(
-                    text = "未生成正文",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = ReinColors.TextTertiary,
-                )
             }
         }
 
@@ -486,6 +518,111 @@ private fun StreamPhaseLine(phase: StreamPhase, hasContent: Boolean) {
     }
 }
 
+/** Body text the model wrote before it continued working. */
+@Composable
+private fun InterimText(segment: MessageSegment) {
+    MarkdownText(
+        markdown = segment.text,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 10.dp),
+        streaming = false,
+        color = ReinColors.TextPrimary.copy(alpha = 0.88f),
+    )
+}
+
+/**
+ * Folded work history of a finished turn: reasoning blocks, tool cards and the
+ * interim text the model wrote in between. Collapsed by default so the final
+ * answer stays the focus.
+ */
+@Composable
+private fun CompletedWorkBlock(
+    messageId: String,
+    segments: List<MessageSegment>,
+) {
+    var expanded by remember(messageId) { mutableStateOf(false) }
+    val toolCount = segments.count { it.type == MessageSegment.TYPE_TOOL }
+    val reasoningChars = segments
+        .filter { it.type == MessageSegment.TYPE_REASONING }
+        .sumOf { it.text.length }
+    val chevron by animateFloatAsState(
+        targetValue = if (expanded) 90f else 0f,
+        animationSpec = tween(180, easing = LiquidEase),
+        label = "workChevron",
+    )
+
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(7.dp))
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                ) { expanded = !expanded }
+                .padding(vertical = 5.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                imageVector = Icons.Rounded.ChevronRight,
+                contentDescription = null,
+                tint = ReinColors.TextTertiary,
+                modifier = Modifier
+                    .size(14.dp)
+                    .graphicsLayer { rotationZ = chevron },
+            )
+            Spacer(Modifier.width(5.dp))
+            Text(
+                text = "已完成工作",
+                style = MaterialTheme.typography.labelMedium.copy(fontSize = 11.5.sp),
+                color = ReinColors.TextSecondary,
+            )
+            if (toolCount > 0) {
+                Spacer(Modifier.width(7.dp))
+                Text(
+                    text = "$toolCount 项工具",
+                    style = MaterialTheme.typography.labelMedium.copy(fontSize = 10.sp),
+                    color = ReinColors.TextTertiary,
+                )
+            }
+            if (reasoningChars > 0) {
+                Spacer(Modifier.width(7.dp))
+                Text(
+                    text = "$reasoningChars 字",
+                    style = MaterialTheme.typography.labelMedium.copy(fontSize = 10.sp),
+                    color = ReinColors.TextTertiary,
+                )
+            }
+        }
+
+        AnimatedVisibility(
+            visible = expanded,
+            enter = fadeIn(tween(140)) + expandVertically(
+                animationSpec = tween(200, easing = LiquidEaseOutSoft),
+                expandFrom = Alignment.Top,
+            ),
+            exit = fadeOut(tween(100)) + shrinkVertically(
+                animationSpec = tween(160, easing = LiquidEaseOutSoft),
+                shrinkTowards = Alignment.Top,
+            ),
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 6.dp, top = 4.dp, bottom = 2.dp),
+            ) {
+                SegmentTimeline(
+                    messageId = messageId,
+                    segments = segments,
+                    isStreaming = false,
+                    hasContent = true,
+                )
+            }
+        }
+    }
+}
+
 /**
  * Chronological reasoning / tool timeline rebuilt from [ChatMessage.segments].
  *
@@ -529,6 +666,8 @@ private fun SegmentTimeline(
                     index = index,
                     segment = segment,
                 )
+
+                MessageSegment.TYPE_TEXT -> InterimText(segment = segment)
 
                 else -> Unit
             }

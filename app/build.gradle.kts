@@ -20,8 +20,8 @@ android {
         applicationId = "com.reinchat.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 30
-        versionName = "0.5.5"
+        versionCode = 31
+        versionName = "0.5.6"
 
         vectorDrawables.useSupportLibrary = true
         resourceConfigurations += listOf("zh", "en")

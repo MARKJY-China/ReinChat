@@ -73,6 +73,7 @@ data class MessageSegment(
     companion object {
         const val TYPE_REASONING = "reasoning"
         const val TYPE_TOOL = "tool"
+        const val TYPE_TEXT = "text"
 
         const val TOOL_STATUS_RUNNING = "running"
         const val TOOL_STATUS_DONE = "done"
@@ -80,6 +81,13 @@ data class MessageSegment(
 
         fun reasoning(text: String): MessageSegment = MessageSegment(
             type = TYPE_REASONING,
+            text = text,
+            status = TOOL_STATUS_DONE,
+        )
+
+        /** Interim answer text the model wrote before it kept working. */
+        fun text(text: String): MessageSegment = MessageSegment(
+            type = TYPE_TEXT,
             text = text,
             status = TOOL_STATUS_DONE,
         )

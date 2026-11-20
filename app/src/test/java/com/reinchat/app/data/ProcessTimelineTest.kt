@@ -113,4 +113,51 @@ class ProcessTimelineTest {
         assertEquals(MessageSegment.TOOL_STATUS_DONE, timeline.segments.single().status)
         assertEquals("x".repeat(4000), timeline.segments.single().detail)
     }
+
+
+    @Test
+    fun interimTextStaysInWorkHistoryAndFinalTextIsTrailing() {
+        val timeline = ProcessTimeline()
+        timeline.appendReasoning("plan")
+        timeline.appendText("interim report")
+        timeline.upsertTool("web_search", "running", "q")
+        timeline.upsertTool("web_search", "done", "results")
+        timeline.appendReasoning("more thinking")
+        timeline.appendText("final answer")
+
+        val work = timeline.workSegments()
+        assertEquals(4, work.size)
+        assertEquals(MessageSegment.TYPE_REASONING, work[0].type)
+        assertEquals(MessageSegment.TYPE_TEXT, work[1].type)
+        assertEquals("interim report", work[1].text)
+        assertEquals(MessageSegment.TYPE_TOOL, work[2].type)
+        assertEquals(MessageSegment.TYPE_REASONING, work[3].type)
+        assertEquals("final answer", timeline.trailingText())
+        assertTrue(timeline.hasText)
+    }
+
+    @Test
+    fun textDeltasMergeIntoOneBlock() {
+        val timeline = ProcessTimeline()
+        timeline.appendText("hello ")
+        timeline.appendText("world")
+        assertEquals(1, timeline.segments.count { it.type == MessageSegment.TYPE_TEXT })
+        assertEquals("hello world", timeline.segments[0].text)
+        assertEquals("", timeline.trailingText())
+        assertTrue(timeline.workSegments().isEmpty())
+    }
+
+
+    @Test
+    fun answerTextPrefersTrailingBlocksAndFallsBackForLegacyMessages() {
+        val legacy = listOf(
+            MessageSegment.reasoning("plan"),
+            MessageSegment.tool("web_search", MessageSegment.TOOL_STATUS_DONE, "results"),
+        )
+        assertEquals("stored body", ProcessTimeline.answerText(legacy, "stored body"))
+
+        val modern = legacy + MessageSegment.text("final answer")
+        assertEquals("final answer", ProcessTimeline.answerText(modern, "stored body"))
+        assertEquals(listOf(MessageSegment.TYPE_REASONING, MessageSegment.TYPE_TOOL), modern.let { ProcessTimeline.splitAnswer(it).first }.map { it.type })
+    }
 }

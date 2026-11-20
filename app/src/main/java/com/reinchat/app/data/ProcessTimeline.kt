@@ -37,6 +37,30 @@ class ProcessTimeline {
     }
 
     /**
+     * Appends body text. Text written before further tool work stays in place so
+     * the UI can fold it into the work history instead of piling it onto the
+     * final answer.
+     */
+    fun appendText(text: String) {
+        if (text.isEmpty()) return
+        val last = items.lastOrNull()
+        if (last != null && last.type == MessageSegment.TYPE_TEXT) {
+            items[items.size - 1] = last.copy(text = last.text + text)
+        } else {
+            items += MessageSegment.text(text)
+        }
+    }
+
+    val hasText: Boolean
+        get() = items.any { it.type == MessageSegment.TYPE_TEXT }
+
+    /** Trailing body text after the last reasoning/tool step, i.e. the answer. */
+    fun trailingText(): String = splitAnswer(items).second
+
+    /** Everything before the trailing body text, which the UI folds away. */
+    fun workSegments(): List<MessageSegment> = splitAnswer(items).first
+
+    /**
      * Seeds the full thinking text carried by a relay `snapshot` only when this
      * client has not received any reasoning yet; otherwise the live deltas are
      * already in the timeline and replaying the snapshot would duplicate them.
@@ -114,5 +138,33 @@ class ProcessTimeline {
 
     companion object {
         private const val MAX_DETAIL_CHARS = 4000
+
+        /**
+         * Splits a finished timeline into the folded work history and the final
+         * answer. Only trailing text blocks belong to the answer; reasoning and
+         * tool steps - including those between interim reports - stay in the
+         * work history so interim text is never piled onto the answer.
+         */
+        /**
+         * Body text to render next to the folded work history. Real streams keep
+         * the answer in the trailing text blocks; conversations stored before
+         * text blocks existed only have [content].
+         */
+        fun answerText(segments: List<MessageSegment>, content: String): String {
+            val trailing = splitAnswer(segments).second
+            if (trailing.isNotBlank()) return trailing
+            val hasText = segments.any { it.type == MessageSegment.TYPE_TEXT }
+            return if (hasText) "" else content
+        }
+
+        fun splitAnswer(segments: List<MessageSegment>): Pair<List<MessageSegment>, String> {
+            val lastStep = segments.indexOfLast { it.type != MessageSegment.TYPE_TEXT }
+            if (lastStep < 0) return emptyList<MessageSegment>() to ""
+            val work = segments.take(lastStep + 1)
+            val answer = segments.drop(lastStep + 1)
+                .filter { it.type == MessageSegment.TYPE_TEXT }
+                .joinToString("") { it.text }
+            return work to answer
+        }
     }
 }
