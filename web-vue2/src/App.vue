@@ -838,7 +838,29 @@ export default {
       const reader = res.body.getReader(); const decoder = new TextDecoder(); let buffer = '';
       let lastSeq = 0;
       while (true) {
-        const part = await reader.read(); if (part.done) break;
+        // A dropped/quiet SSE connection must not leave the UI on "请求服务端中"
+        // forever. Poll the job state when no frame arrives for 20s.
+        const part = await Promise.race([
+          reader.read(),
+          new Promise((resolve) => setTimeout(() => resolve({ timedOut: true }), 20000)),
+        ]);
+        if (part.timedOut) {
+          let state = null;
+          try { state = await this.api.request('/v1/relay/jobs/' + encodeURIComponent(job.id)); } catch (e) { /* ignore */ }
+          if (state && state.status === 'completed') {
+            if (state.text) assistant.content = state.text;
+            if (state.reasoning) assistant.reasoning = state.reasoning;
+            this.finalizeTools(assistant, false);
+            return;
+          }
+          if (state && (state.status === 'failed' || state.status === 'cancelled')) {
+            this.finalizeTools(assistant, true);
+            throw new Error(state.error || (state.status === 'cancelled' ? '生成已取消' : '生成失败'));
+          }
+          stream.phase = 'streaming';
+          continue;
+        }
+        if (part.done) break;
         buffer += decoder.decode(part.value, { stream: true });
         let cut;
         while ((cut = buffer.indexOf('\n\n')) >= 0) {

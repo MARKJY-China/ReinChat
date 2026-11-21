@@ -91,7 +91,7 @@ func newRelayHub() *relayHub {
 }
 
 func (h *relayHub) subscribe(jobID string) (<-chan relayEvent, func()) {
-	ch := make(chan relayEvent, 64)
+	ch := make(chan relayEvent, 512)
 	h.mu.Lock()
 	h.addSubscriberLocked(jobID, ch)
 	h.mu.Unlock()
@@ -164,10 +164,21 @@ func (h *relayHub) publish(jobID string, event relayEvent) {
 	case "delta":
 		h.text[jobID] += event.Text
 	}
+	terminal := event.Type == "error" ||
+		(event.Type == "status" && (event.Status == "completed" || event.Status == "failed" || event.Status == "cancelled"))
 	for ch := range h.subs[jobID] {
 		select {
 		case ch <- event:
 		default:
+			// A slow client must not lose the terminal event, otherwise it
+			// waits on the stream forever. Give the terminal event a short
+			// blocking window and drop only intermediate frames.
+			if terminal {
+				select {
+				case ch <- event:
+				case <-time.After(2 * time.Second):
+				}
+			}
 		}
 	}
 }
@@ -687,6 +698,14 @@ func (s *Server) handleRelayEvents(w http.ResponseWriter, r *http.Request, user 
 				return
 			}
 			flusher.Flush()
+			// A terminal event ends the stream. Keeping it open would leave a
+			// client waiting forever if it missed the event during a reconnect.
+			if event.Type == "status" && (event.Status == "completed" || event.Status == "failed" || event.Status == "cancelled") {
+				return
+			}
+			if event.Type == "error" {
+				return
+			}
 		}
 	}
 }
